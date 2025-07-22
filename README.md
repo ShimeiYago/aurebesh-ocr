@@ -49,6 +49,22 @@ assets/fonts/variant/  # bold / italic / condensed
 assets/fonts/fancy/    # decorative / graffiti
 ```
 
+**Recommended fonts**
+
+| Category | Font (Style)                     | License                                     | Download                                                              |
+| -------- | -------------------------------- | ------------------------------------------- | --------------------------------------------------------------------- |
+| Core     | **Aurebesh AF – Canon**          | Public Domain                               | [FontSpace](https://www.fontspace.com/aurebesh-af-font-f49637)        |
+|          | **FT Aurebesh – Regular**        | SIL OFL 1.1                                 | [DeeFont](https://www.deefont.com/ft-aurebesh-font-family/)           |
+|          | **FT Aurebesh – UltraLight**     | SIL OFL 1.1                                 | [DeeFont](https://www.deefont.com/ft-aurebesh-font-family/)           |
+|          | **Aurek-Besh – Regular**         | Freeware                                    | [FontSpace](https://www.fontspace.com/aurek-besh-font-f9639)          |
+| Variant  | **FT Aurebesh – Black**          | SIL OFL 1.1                                 | [DeeFont](https://www.deefont.com/ft-aurebesh-font-family/)           |
+|          | **Aurebesh Font – Italic**       | Freeware, commercial use requires donation  | [FontSpace](https://www.fontspace.com/aurebesh-font-f17959)           |
+|          | **Aurek-Besh – Narrow**          | Freeware                                    | [FontSpace](https://www.fontspace.com/aurek-besh-font-f9639)          |
+| Fancy    | **Naboo AF Aurebesh**            | Public Domain                               | [FontSpace](https://www.fontspace.com/naboo-af-aurebesh-font-f118825) |
+|          | **Droidobesh Depot**             | Public Domain                               | [FontSpace](https://www.fontspace.com/droidobesh-depot-font-f55049)   |
+|          | **Aurebesh Racer AF – Regular**  | CC0 Public Domain                           | [CufonFonts](https://www.cufonfonts.com/font/aurebesh-racer-af)       |
+
+
 ### 2. Place background images
 
 Put any royalty-free photos (≥ 512 px) in:
