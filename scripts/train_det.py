@@ -188,13 +188,30 @@ class DetectorTrainer:
             self.data_dir, split='val', transform=transform
         )
         
+        # Custom collate function to handle variable number of annotations
+        def detection_collate(batch):
+            images = []
+            targets = []
+            
+            for sample in batch:
+                image, target = sample
+                images.append(image)
+                targets.append(target)
+            
+            # Stack images into batch
+            images = torch.stack(images, 0)
+            
+            # Keep targets as list since they have variable sizes
+            return images, targets
+        
         # Data loaders
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.config['batch_size'],
             shuffle=True,
             num_workers=0,  # Set to 0 to avoid multiprocessing issues
-            pin_memory=False
+            pin_memory=False,
+            collate_fn=detection_collate
         )
         
         val_loader = DataLoader(
@@ -202,7 +219,8 @@ class DetectorTrainer:
             batch_size=self.config['batch_size'],
             shuffle=False,
             num_workers=0,  # Set to 0 to avoid multiprocessing issues
-            pin_memory=False
+            pin_memory=False,
+            collate_fn=detection_collate
         )
         
         self.logger.info(f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}")
@@ -261,7 +279,12 @@ class DetectorTrainer:
         pbar = tqdm(self.train_loader, desc=f"Train Epoch {epoch}")
         for batch_idx, (images, targets) in enumerate(pbar):
             images = images.to(self.device)
-            target_maps = targets['maps'].to(self.device)
+            
+            # Stack target maps from list of targets
+            target_maps = []
+            for target in targets:
+                target_maps.append(target['maps'])
+            target_maps = torch.stack(target_maps, 0).to(self.device)
             
             # Forward pass
             with autocast(device_type=self.device.type, enabled=self.scaler is not None):
@@ -301,7 +324,12 @@ class DetectorTrainer:
             pbar = tqdm(self.val_loader, desc="Validation")
             for batch_idx, (images, targets) in enumerate(pbar):
                 images = images.to(self.device)
-                target_maps = targets['maps'].to(self.device)
+                
+                # Stack target maps from list of targets
+                target_maps = []
+                for target in targets:
+                    target_maps.append(target['maps'])
+                target_maps = torch.stack(target_maps, 0).to(self.device)
                 
                 # Forward pass
                 with autocast(device_type=self.device.type, enabled=self.scaler is not None):

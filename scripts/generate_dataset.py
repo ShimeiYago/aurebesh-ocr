@@ -176,68 +176,185 @@ class AurebeshDatasetGenerator:
         font_path: Path, 
         image_size: Tuple[int, int]
     ) -> Tuple[Image.Image, List[Dict]]:
-        """Render text on image and return image with annotations."""
+        """Render multiple text blocks on image and return image with annotations."""
         # Create background
         bg = self._get_background(image_size)
-        
-        # Setup font
-        font_size = random.randint(30, 80)
-        try:
-            font = ImageFont.truetype(str(font_path), font_size)
-        except:
-            self.logger.warning(f"Failed to load font {font_path}, using default")
-            font = ImageFont.load_default()
+        # Convert to RGBA for rotation support
+        if bg.mode != 'RGBA':
+            bg = bg.convert('RGBA')
         
         # Create drawing context
         draw = ImageDraw.Draw(bg)
         
-        # Text color
-        text_color = tuple(random.randint(0, 255) for _ in range(3))
+        # Generate multiple text blocks (1-5 per image)
+        num_text_blocks = random.randint(1, 5)
+        annotations = []
+        occupied_regions = []  # To avoid overlapping text
         
-        # Calculate text position
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
+        for block_idx in range(num_text_blocks):
+            # Generate text for this block (or use provided text for first block)
+            if block_idx == 0:
+                block_text = text
+            else:
+                block_text = self._generate_text()
+            
+            # Sample font for this block (can vary per block)
+            if block_idx > 0:
+                font_path = self._sample_font()
+            
+            # Setup font with varying sizes
+            font_size = random.randint(30, 80)
+            try:
+                font = ImageFont.truetype(str(font_path), font_size)
+            except:
+                self.logger.warning(f"Failed to load font {font_path}, using default")
+                font = ImageFont.load_default()
+            
+            # Text color for this block
+            text_color = tuple(random.randint(0, 255) for _ in range(3))
+            
+            # Calculate text dimensions
+            bbox = draw.textbbox((0, 0), block_text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            
+            # Try to find non-overlapping position
+            max_attempts = 50
+            placed = False
+            
+            for attempt in range(max_attempts):
+                max_x = max(10, image_size[0] - text_width - 10)
+                max_y = max(10, image_size[1] - text_height - 10)
+                
+                if max_x <= 10 or max_y <= 10:
+                    break  # Text too large for image
+                
+                x = random.randint(10, max_x)
+                y = random.randint(10, max_y)
+                
+                # Check overlap with existing text blocks
+                new_region = [x - 5, y - 5, x + text_width + 5, y + text_height + 5]  # Add padding
+                overlap = False
+                
+                for region in occupied_regions:
+                    if (new_region[0] < region[2] and new_region[2] > region[0] and
+                        new_region[1] < region[3] and new_region[3] > region[1]):
+                        overlap = True
+                        break
+                
+                if not overlap or attempt == max_attempts - 1:
+                    # Found non-overlapping position or last attempt
+                    occupied_regions.append(new_region)
+                    placed = True
+                    
+                    # Draw text with optional effects
+                    effects = self.config['style']['effects']
+                    
+                    # Check if we should apply rotation
+                    if 'rotation_prob' in effects and random.random() < effects['rotation_prob']:
+                        # Apply rotation
+                        rotation_range = effects.get('rotation_range', [-15, 15])
+                        angle = random.uniform(rotation_range[0], rotation_range[1])
+                        
+                        # Create a temporary image for the text
+                        text_img = Image.new('RGBA', (text_width + 20, text_height + 20), (0, 0, 0, 0))
+                        text_draw = ImageDraw.Draw(text_img)
+                        
+                        # Draw text with effects on temporary image
+                        # Shadow
+                        if random.random() < effects['shadow_prob']:
+                            shadow_offset = random.randint(2, 5)
+                            shadow_color = tuple(int(c * 0.3) for c in text_color) + (255,)
+                            text_draw.text((10 + shadow_offset, 10 + shadow_offset), block_text, font=font, fill=shadow_color)
+                        
+                        # Border
+                        if random.random() < effects['border_prob']:
+                            for dx in [-1, 0, 1]:
+                                for dy in [-1, 0, 1]:
+                                    if dx != 0 or dy != 0:
+                                        text_draw.text((10 + dx, 10 + dy), block_text, font=font, fill=(0, 0, 0, 255))
+                        
+                        # Main text
+                        text_draw.text((10, 10), block_text, font=font, fill=text_color + (255,))
+                        
+                        # Rotate the text image
+                        rotated_text = text_img.rotate(-angle, expand=True, fillcolor=(0, 0, 0, 0))
+                        
+                        # Calculate new position after rotation
+                        rot_w, rot_h = rotated_text.size
+                        paste_x = max(0, x - (rot_w - text_width) // 2)
+                        paste_y = max(0, y - (rot_h - text_height) // 2)
+                        
+                        # Paste rotated text onto background
+                        bg.paste(rotated_text, (paste_x, paste_y), rotated_text)
+                        
+                        # Update bounding box for rotated text
+                        # Calculate the four corners of the rotated rectangle
+                        import math
+                        cx, cy = x + text_width/2, y + text_height/2  # center
+                        cos_a = math.cos(math.radians(angle))
+                        sin_a = math.sin(math.radians(angle))
+                        
+                        # Four corners before rotation (relative to center)
+                        corners = [
+                            (-text_width/2, -text_height/2),
+                            (text_width/2, -text_height/2),
+                            (text_width/2, text_height/2),
+                            (-text_width/2, text_height/2)
+                        ]
+                        
+                        # Rotate corners
+                        rotated_corners = []
+                        for dx, dy in corners:
+                            rx = dx * cos_a - dy * sin_a + cx
+                            ry = dx * sin_a + dy * cos_a + cy
+                            rotated_corners.append([int(rx), int(ry)])
+                        
+                        # Create annotation with rotated polygon
+                        annotation = {
+                            'text': block_text,
+                            'bbox': [
+                                int(min(c[0] for c in rotated_corners)),
+                                int(min(c[1] for c in rotated_corners)),
+                                int(max(c[0] for c in rotated_corners)),
+                                int(max(c[1] for c in rotated_corners))
+                            ],
+                            'polygon': rotated_corners  # Already a list of [x, y] pairs
+                        }
+                    else:
+                        # No rotation - original code
+                        # Shadow
+                        if random.random() < effects['shadow_prob']:
+                            shadow_offset = random.randint(2, 5)
+                            shadow_color = tuple(int(c * 0.3) for c in text_color)
+                            draw.text((x + shadow_offset, y + shadow_offset), block_text, font=font, fill=shadow_color)
+                        
+                        # Border
+                        if random.random() < effects['border_prob']:
+                            for dx in [-1, 0, 1]:
+                                for dy in [-1, 0, 1]:
+                                    if dx != 0 or dy != 0:
+                                        draw.text((x + dx, y + dy), block_text, font=font, fill=(0, 0, 0))
+                        
+                        # Main text
+                        draw.text((x, y), block_text, font=font, fill=text_color)
+                        
+                        # Create annotation
+                        annotation = {
+                            'text': block_text,
+                            'bbox': [x, y, x + text_width, y + text_height],
+                            'polygon': [
+                                [x, y],
+                                [x + text_width, y],
+                                [x + text_width, y + text_height],
+                                [x, y + text_height]
+                            ]
+                        }
+                    
+                    annotations.append(annotation)
+                    break
         
-        max_x = max(10, image_size[0] - text_width - 10)
-        max_y = max(10, image_size[1] - text_height - 10)
-        
-        x = random.randint(10, max_x) if max_x > 10 else 10
-        y = random.randint(10, max_y) if max_y > 10 else 10
-        
-        # Draw text with optional effects
-        effects = self.config['style']['effects']
-        
-        # Shadow
-        if random.random() < effects['shadow_prob']:
-            shadow_offset = random.randint(2, 5)
-            shadow_color = tuple(int(c * 0.3) for c in text_color)
-            draw.text((x + shadow_offset, y + shadow_offset), text, font=font, fill=shadow_color)
-        
-        # Main text
-        draw.text((x, y), text, font=font, fill=text_color)
-        
-        # Border
-        if random.random() < effects['border_prob']:
-            for dx in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    if dx != 0 or dy != 0:
-                        draw.text((x + dx, y + dy), text, font=font, fill=(0, 0, 0))
-            draw.text((x, y), text, font=font, fill=text_color)
-        
-        # Create annotation
-        annotation = {
-            'text': text,
-            'bbox': [x, y, x + text_width, y + text_height],
-            'polygon': [
-                [x, y],
-                [x + text_width, y],
-                [x + text_width, y + text_height],
-                [x, y + text_height]
-            ]
-        }
-        
-        return bg, [annotation]
+        return bg, annotations
     
     def _save_lmdb(self, image: Image.Image, text: str, lmdb_env, idx: int):
         """Save cropped text image to LMDB for recognizer."""
@@ -281,7 +398,7 @@ class AurebeshDatasetGenerator:
             lmdb_dir = ensure_dir(split_dir / 'lmdb')
             
             # Setup LMDB
-            lmdb_env = lmdb.open(str(lmdb_dir), map_size=10 * 1024 * 1024 * 1024)  # 10GB
+            lmdb_env = lmdb.open(str(lmdb_dir), map_size=50 * 1024 * 1024 * 1024)  # 50GB
             
             # Annotations
             annotations = {
@@ -340,7 +457,7 @@ class AurebeshDatasetGenerator:
                         'category_id': 1,
                         'bbox': [x, y, w, h],
                         'area': w * h,
-                        'segmentation': [sum(ann['polygon'], [])],  # Flatten polygon
+                        'segmentation': [[coord for point in ann['polygon'] for coord in point]],  # Flatten polygon
                         'iscrowd': 0,
                         'text': ann['text']
                     }

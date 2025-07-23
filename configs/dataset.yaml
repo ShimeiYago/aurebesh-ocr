@@ -28,17 +28,19 @@ style:
   effects:
     shadow_prob: 0.3
     border_prob: 0.2
+    rotation_prob: 0.2
+    rotation_range: [-5, 5]
     
 # Augmentation parameters
 augmentation:
   perspective:
-    prob: 0.5
+    prob: 0.3
     degree_range: [-10, 10]
     
   noise:
     prob: 0.3
-    var_range: [0.001, 0.01]
-    
+    var_range: [0.001, 0.005]
+
   blur:
     prob: 0.3
     kernel_range: [1, 3]

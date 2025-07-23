@@ -38,7 +38,7 @@ class AurebeshRecognitionDataset(Dataset):
         self.env = None
         
         # Get all keys from LMDB
-        env = lmdb.open(str(self.lmdb_path), readonly=True, lock=False)
+        env = lmdb.open(str(self.lmdb_path), readonly=True, lock=False, map_size=50 * 1024 * 1024 * 1024)
         with env.begin() as txn:
             cursor = txn.cursor()
             self.keys = [key.decode() for key, _ in cursor]
@@ -55,7 +55,7 @@ class AurebeshRecognitionDataset(Dataset):
     def __getitem__(self, idx):
         # Open LMDB if not already open (happens in each worker process)
         if self.env is None:
-            self.env = lmdb.open(str(self.lmdb_path), readonly=True, lock=False)
+            self.env = lmdb.open(str(self.lmdb_path), readonly=True, lock=False, map_size=50 * 1024 * 1024 * 1024)
         
         with self.env.begin() as txn:
             # Get data from LMDB using the stored key
