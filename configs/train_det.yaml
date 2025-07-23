@@ -1,0 +1,12 @@
+epochs: 60
+batch_size: 4            # gradient_accumulation=4 → eff 16
+amp: True                # torch.cuda.amp autocast (MPS-safe)
+optimizer:
+  name: AdamW
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+scheduler:
+  name: CosineAnnealingLR
+  warmup_epochs: 5
+  eta_min: 1.0e-6
+metrics: [map_50]

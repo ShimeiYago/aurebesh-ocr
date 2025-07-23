@@ -1,0 +1,48 @@
+# SynthTIGER configuration fragment for Aurebesh dataset generation
+style:
+  font:
+    # Font sampling probabilities
+    core_prob: 0.6
+    variant_prob: 0.3
+    fancy_prob: 0.1
+  
+  # Text generation parameters
+  text:
+    min_words: 1
+    max_words: 5
+    min_word_length: 2
+    max_word_length: 10
+    
+  # Layout parameters
+  layout:
+    spacing_range: [0.8, 1.2]
+    line_spacing_range: [0.9, 1.1]
+    
+  # Color parameters
+  color:
+    text_color_mode: "random"  # random, fixed
+    background_mode: "mixed"    # image, synthetic, mixed
+    synthetic_bg_prob: 0.2
+    
+  # Effects
+  effects:
+    shadow_prob: 0.3
+    border_prob: 0.2
+    
+# Augmentation parameters
+augmentation:
+  perspective:
+    prob: 0.5
+    degree_range: [-10, 10]
+    
+  noise:
+    prob: 0.3
+    var_range: [0.001, 0.01]
+    
+  blur:
+    prob: 0.3
+    kernel_range: [1, 3]
+    
+  jpeg:
+    prob: 0.5
+    quality_range: [70, 95]
