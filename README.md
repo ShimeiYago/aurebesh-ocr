@@ -90,20 +90,71 @@ data/real/annotations.json  # COCO polygons + transcripts per image
 # 1. synthetic dataset (20 k images)
 python scripts/generate_dataset.py --num_images 20000
 
-# 2. fine-tune detector (60 epochs ≈ 18 h on M4)
+# 2. fine-tune detector (60 epochs)
 python scripts/train_det.py
 
-# 3. fine-tune recogniser (40 epochs ≈ 6 h)
+# 3. fine-tune recogniser (40 epochs)
 python scripts/train_rec.py
 
 # 4. Evaluate Performance
 python scripts/evaluate.py
 
 # 5. Run Inference
-python scripts/inference.py --img_path examples/sample_real.jpg
+python scripts/inference.py --output_dir outputs/inference --img_path <real_img_path>
 ```
 
 ---
+
+## Configuration
+
+You can customize the behavior of the OCR pipeline by editing the configuration files in the `configs/` directory:
+
+### `charset_aurebesh.yaml`
+- **Purpose**: Defines the character set for recognition
+- **Default**: Includes digits (0-9) and uppercase letters (A-Z)
+- **Usage**: Modify to add/remove characters the recognizer should learn
+
+### `dataset.yaml`
+- **Purpose**: Controls synthetic dataset generation parameters
+- **Key settings**:
+  - `style.font`: Font sampling probabilities (core: 60%, variant: 30%, fancy: 10%)
+  - `style.text`: Text generation parameters (word count, length ranges)
+  - `style.color`: Text and background color modes
+  - `effects`: Visual effects like shadow, border, rotation
+  - `augmentation`: Data augmentation settings (perspective, noise, blur, JPEG compression)
+
+### `train_det.yaml`
+- **Purpose**: Detection model training configuration
+- **Key settings**:
+  - `epochs`: 60 (default)
+  - `batch_size`: 4 with gradient accumulation
+  - `optimizer`: AdamW with learning rate 1e-4
+  - `scheduler`: CosineAnnealingLR with 5-epoch warmup
+  - `amp`: Automatic Mixed Precision enabled
+
+### `train_rec.yaml`
+- **Purpose**: Recognition model training configuration
+- **Key settings**:
+  - `epochs`: 40 (default)
+  - `batch_size`: 64
+  - `optimizer`: AdamW with learning rate 2e-4
+  - `scheduler`: OneCycleLR with 30% warmup
+  - `metrics`: Character Error Rate (CER)
+  - `charset`: Links to `charset_aurebesh.yaml`
+
+To modify training behavior, edit the relevant YAML file before running the training scripts.
+
+---
+
+## Monitoring
+
+To monitor training progress, launch TensorBoard with your log directory:
+
+```bash
+tensorboard --logdir <path_to_log_dir>
+```
+
+Replace `<path_to_log_dir>` with the actual path to your output logs (e.g., `outputs/log/your_run/tensorboard_dir`).
 
 ## Author
 

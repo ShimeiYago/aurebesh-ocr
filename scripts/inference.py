@@ -252,14 +252,30 @@ class AurebeshOCR:
 def main():
     parser = argparse.ArgumentParser(description="Run Aurebesh OCR inference on an image")
     parser.add_argument("--img_path", type=Path, required=True, help="Path to input image")
-    parser.add_argument("--det_ckpt", type=Path, required=True, help="Detector checkpoint path")
-    parser.add_argument("--rec_ckpt", type=Path, required=True, help="Recognizer checkpoint path")
+    parser.add_argument("--det_ckpt", type=Path, default="outputs/weights/det/best.pt", help="Detector checkpoint path (default: outputs/weights/det/best.pt)")
+    parser.add_argument("--rec_ckpt", type=Path, default="outputs/weights/rec/best.pt", help="Recognizer checkpoint path (default: outputs/weights/rec/best.pt)")
     parser.add_argument("--output_dir", type=Path, help="Output directory (optional)")
     parser.add_argument("--device", type=str, default="mps", help="Device to use")
     parser.add_argument("--save_json", action="store_true", help="Save results as JSON")
     parser.add_argument("--show", action="store_true", help="Display result image")
     
     args = parser.parse_args()
+    
+    # Resolve checkpoint paths relative to the project root
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent
+    
+    # Convert relative paths to absolute paths
+    if not args.det_ckpt.is_absolute():
+        args.det_ckpt = project_root / args.det_ckpt
+    if not args.rec_ckpt.is_absolute():
+        args.rec_ckpt = project_root / args.rec_ckpt
+    
+    # Check if checkpoint files exist
+    if not args.det_ckpt.exists():
+        raise FileNotFoundError(f"Detection checkpoint not found: {args.det_ckpt}")
+    if not args.rec_ckpt.exists():
+        raise FileNotFoundError(f"Recognition checkpoint not found: {args.rec_ckpt}")
     
     # Initialize OCR
     ocr = AurebeshOCR(
