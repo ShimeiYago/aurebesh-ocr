@@ -374,7 +374,7 @@ class AurebeshDatasetGenerator:
         
         return bg, annotations
     
-    def _save_lmdb(self, image: Image.Image, text: str, lmdb_env, idx: int):
+    def _save_lmdb(self, image: Image.Image, text: str, lmdb_env, lmdb_idx: int):
         """Save cropped text image to LMDB for recognizer."""
         # Convert to bytes
         img_bytes = cv2.imencode('.png', np.array(image))[1].tobytes()
@@ -383,12 +383,12 @@ class AurebeshDatasetGenerator:
         entry = {
             'image': img_bytes,
             'text': text,
-            'idx': idx
+            'idx': lmdb_idx
         }
         
         # Save to LMDB
         with lmdb_env.begin(write=True) as txn:
-            txn.put(str(idx).encode(), pickle.dumps(entry))
+            txn.put(str(lmdb_idx).encode(), pickle.dumps(entry))
     
     def generate(self):
         """Generate complete dataset."""
@@ -406,6 +406,7 @@ class AurebeshDatasetGenerator:
         }
         
         global_idx = 0
+        global_lmdb_idx = 0  # Separate counter for LMDB entries
         
         for split_name, split_size in splits.items():
             self.logger.info(f"Generating {split_name} split with {split_size} images")
@@ -474,8 +475,9 @@ class AurebeshDatasetGenerator:
                         bbox = ann['bbox']
                         text_crop = image_aug.crop(bbox)
                         
-                        # Save to LMDB
-                        self._save_lmdb(text_crop, ann['text'], lmdb_env, global_idx)
+                        # Save to LMDB with unique index
+                        self._save_lmdb(text_crop, ann['text'], lmdb_env, global_lmdb_idx)
+                        global_lmdb_idx += 1
                         
                         # Add detection annotation
                         x, y, x2, y2 = bbox
