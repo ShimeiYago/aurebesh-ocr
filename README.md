@@ -96,8 +96,11 @@ python scripts/train_det.py
 # 3. fine-tune recogniser (40 epochs)
 python scripts/train_rec.py
 
-# 4. Evaluate Performance
-python scripts/evaluate.py
+# 4.1. Evaluate Performance for test data
+python scripts/evaluate.py --images data/synth/test
+
+# 4.2. Evaluate Performance for real data
+python scripts/evaluate.py --images data/real
 
 # 5. Run Inference
 python scripts/inference.py --output_dir outputs/inference --img_path <real_img_path>

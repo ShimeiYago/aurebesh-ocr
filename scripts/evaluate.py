@@ -41,10 +41,10 @@ class AurebeshEvaluator:
         self.device = torch.device(device if torch.backends.mps.is_available() else 'cpu')
         
         # Setup directories
-        self.log_dir = ensure_dir(self.output_dir / 'log')
+        self.log_dir = ensure_dir(self.output_dir)
         
         # Setup logger
-        self.logger = setup_logger('evaluate', self.log_dir, use_tensorboard=True)
+        self.logger = setup_logger('evaluate', self.log_dir, use_tensorboard=False)
         
         # Load models
         self.detector, self.recognizer = self._load_models()
@@ -359,32 +359,6 @@ class AurebeshEvaluator:
                 **metrics
             }
             results.append(result)
-            
-            # Log sample to tensorboard
-            if hasattr(self.logger, 'tensorboard_writer'):
-                # Create visualization
-                vis_img = image.copy()
-                
-                # Draw predictions in green
-                for det in detections:
-                    x1, y1, x2, y2 = det['bbox']
-                    cv2.rectangle(vis_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    if 'text' in det:
-                        cv2.putText(vis_img, det['text'], (x1, y1 - 5),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                
-                # Draw ground truth in red
-                for gt in gt_annotations:
-                    x1, y1, x2, y2 = gt['bbox']
-                    cv2.rectangle(vis_img, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                
-                # Convert to RGB and save
-                vis_img_rgb = cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB)
-                self.logger.tensorboard_writer.add_image(
-                    f'eval/{img_path.stem}',
-                    vis_img_rgb,
-                    dataformats='HWC'
-                )
         
         # Calculate overall metrics
         overall_metrics = {
@@ -413,11 +387,6 @@ class AurebeshEvaluator:
         self.logger.info(f"  CER: {overall_metrics['cer']:.4f}")
         self.logger.info(f"  H-mean: {overall_metrics['hmean']:.4f}")
         
-        # Log to tensorboard
-        if hasattr(self.logger, 'tensorboard_writer'):
-            for metric, value in overall_metrics.items():
-                self.logger.tensorboard_writer.add_scalar(f'eval/{metric}', value)
-        
         self.logger.info(f"Results saved to {csv_path}")
         
         return overall_metrics
@@ -425,10 +394,10 @@ class AurebeshEvaluator:
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Aurebesh OCR pipeline")
-    parser.add_argument("--det_ckpt", type=Path, required=True, help="Detector checkpoint path")
-    parser.add_argument("--rec_ckpt", type=Path, required=True, help="Recognizer checkpoint path")
-    parser.add_argument("--images", type=Path, default="data/real", help="Images directory")
-    parser.add_argument("--output_dir", type=Path, default="outputs", help="Output directory")
+    parser.add_argument("--det_ckpt", type=Path, default="outputs/weights/det/best.pt", help="Detector checkpoint path")
+    parser.add_argument("--rec_ckpt", type=Path, default="outputs/weights/rec/best.pt", help="Recognizer checkpoint path")
+    parser.add_argument("--images", type=Path, default="data/synth/test", help="Images directory")
+    parser.add_argument("--output_dir", type=Path, default="outputs/eval", help="Output directory")
     parser.add_argument("--device", type=str, default="mps", help="Device to use")
     
     args = parser.parse_args()
