@@ -87,7 +87,7 @@ class AurebeshDatasetGenerator:
         if aug_config['noise']['prob'] > 0:
             transforms.append(
                 A.GaussNoise(
-                    var_limit=aug_config['noise']['var_range'],
+                    std_range=aug_config['noise']['var_range'],
                     p=aug_config['noise']['prob']
                 )
             )
@@ -95,6 +95,8 @@ class AurebeshDatasetGenerator:
         # Blur
         if aug_config['blur']['prob'] > 0:
             kernel_range = aug_config['blur']['kernel_range']
+            # Ensure minimum kernel size is 3
+            kernel_range = [max(3, kernel_range[0]), max(3, kernel_range[1])]
             transforms.append(
                 A.Blur(
                     blur_limit=kernel_range,
@@ -107,8 +109,7 @@ class AurebeshDatasetGenerator:
             quality_range = aug_config['jpeg']['quality_range']
             transforms.append(
                 A.ImageCompression(
-                    quality_lower=quality_range[0],
-                    quality_upper=quality_range[1],
+                    quality_range=quality_range,
                     p=aug_config['jpeg']['prob']
                 )
             )
@@ -202,21 +203,38 @@ class AurebeshDatasetGenerator:
             if block_idx > 0:
                 font_path = self._sample_font()
             
-            # Setup font with varying sizes
-            font_size = random.randint(30, 80)
-            try:
-                font = ImageFont.truetype(str(font_path), font_size)
-            except:
-                self.logger.warning(f"Failed to load font {font_path}, using default")
-                font = ImageFont.load_default()
+            # Setup font with varying sizes - try to fit text in image
+            max_font_size = 80
+            min_font_size = 20
+            font_size = random.randint(min_font_size, max_font_size)
+            
+            # Try to find a font size that fits
+            for size_attempt in range(5):  # Max 5 attempts to find suitable font size
+                try:
+                    font = ImageFont.truetype(str(font_path), font_size)
+                except:
+                    self.logger.warning(f"Failed to load font {font_path}, using default")
+                    font = ImageFont.load_default()
+                
+                # Calculate text dimensions
+                bbox = draw.textbbox((0, 0), block_text, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+                
+                # Check if text fits in image with margins
+                margin = 20
+                if text_width <= image_size[0] - margin and text_height <= image_size[1] - margin:
+                    break  # Font size works
+                
+                # Reduce font size for next attempt
+                font_size = max(min_font_size, int(font_size * 0.8))
+            
+            # Skip this text block if still too large
+            if text_width > image_size[0] - 20 or text_height > image_size[1] - 20:
+                continue
             
             # Text color for this block
             text_color = tuple(random.randint(0, 255) for _ in range(3))
-            
-            # Calculate text dimensions
-            bbox = draw.textbbox((0, 0), block_text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
             
             # Try to find non-overlapping position
             max_attempts = 50
@@ -407,63 +425,80 @@ class AurebeshDatasetGenerator:
                 'categories': [{'id': 1, 'name': 'text'}]
             }
             
-            for i in tqdm(range(split_size), desc=f"Generating {split_name}"):
-                # Generate text
-                text = self._generate_text()
-                
-                # Sample font
-                font_path = self._sample_font()
-                
-                # Render text on image
-                image, text_annotations = self._render_text_on_image(
-                    text, font_path, (self.resolution, self.resolution)
-                )
-                
-                # Apply augmentations
-                image_np = np.array(image)
-                augmented = self.augmentations(image=image_np)
-                image_aug = Image.fromarray(augmented['image'])
-                
-                # Save detection image
-                image_name = f"{split_name}_{i:06d}.png"
-                image_path = images_dir / image_name
-                image_aug.save(image_path)
-                
-                # Add to COCO annotations
-                image_info = {
-                    'id': global_idx,
-                    'file_name': image_name,
-                    'width': self.resolution,
-                    'height': self.resolution
-                }
-                annotations['images'].append(image_info)
-                
-                # Process each text instance
-                for ann_idx, ann in enumerate(text_annotations):
-                    # Crop text region for recognizer
-                    bbox = ann['bbox']
-                    text_crop = image_aug.crop(bbox)
+            generated_count = 0
+            attempts = 0
+            max_attempts = split_size * 2  # Allow up to 2x attempts to get required images
+            
+            with tqdm(total=split_size, desc=f"Generating {split_name}") as pbar:
+                while generated_count < split_size and attempts < max_attempts:
+                    # Generate text
+                    text = self._generate_text()
                     
-                    # Save to LMDB
-                    self._save_lmdb(text_crop, ann['text'], lmdb_env, global_idx)
+                    # Sample font
+                    font_path = self._sample_font()
                     
-                    # Add detection annotation
-                    x, y, x2, y2 = bbox
-                    w, h = x2 - x, y2 - y
+                    # Render text on image
+                    image, text_annotations = self._render_text_on_image(
+                        text, font_path, (self.resolution, self.resolution)
+                    )
                     
-                    det_ann = {
-                        'id': global_idx * 100 + ann_idx,
-                        'image_id': global_idx,
-                        'category_id': 1,
-                        'bbox': [x, y, w, h],
-                        'area': w * h,
-                        'segmentation': [[coord for point in ann['polygon'] for coord in point]],  # Flatten polygon
-                        'iscrowd': 0,
-                        'text': ann['text']
+                    attempts += 1
+                    
+                    # Skip images with no text annotations
+                    if not text_annotations:
+                        self.logger.warning(f"No text placed on image attempt {attempts}, retrying...")
+                        continue
+                    
+                    # Apply augmentations
+                    image_np = np.array(image)
+                    augmented = self.augmentations(image=image_np)
+                    image_aug = Image.fromarray(augmented['image'])
+                    
+                    # Save detection image
+                    image_name = f"{split_name}_{generated_count:06d}.png"
+                    image_path = images_dir / image_name
+                    image_aug.save(image_path)
+                    
+                    # Add to COCO annotations
+                    image_info = {
+                        'id': global_idx,
+                        'file_name': image_name,
+                        'width': self.resolution,
+                        'height': self.resolution
                     }
-                    annotations['annotations'].append(det_ann)
+                    annotations['images'].append(image_info)
+                    
+                    # Process each text instance
+                    for ann_idx, ann in enumerate(text_annotations):
+                        # Crop text region for recognizer
+                        bbox = ann['bbox']
+                        text_crop = image_aug.crop(bbox)
+                        
+                        # Save to LMDB
+                        self._save_lmdb(text_crop, ann['text'], lmdb_env, global_idx)
+                        
+                        # Add detection annotation
+                        x, y, x2, y2 = bbox
+                        w, h = x2 - x, y2 - y
+                        
+                        det_ann = {
+                            'id': global_idx * 100 + ann_idx,
+                            'image_id': global_idx,
+                            'category_id': 1,
+                            'bbox': [x, y, w, h],
+                            'area': w * h,
+                            'segmentation': [[coord for point in ann['polygon'] for coord in point]],  # Flatten polygon
+                            'iscrowd': 0,
+                            'text': ann['text']
+                        }
+                        annotations['annotations'].append(det_ann)
+                    
+                    generated_count += 1
+                    global_idx += 1
+                    pbar.update(1)
                 
-                global_idx += 1
+                if generated_count < split_size:
+                    self.logger.warning(f"Could only generate {generated_count}/{split_size} images after {attempts} attempts")
             
             # Save annotations
             ann_path = split_dir / 'annotations.json'
