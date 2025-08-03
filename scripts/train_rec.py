@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import OneCycleLR
+from torch.optim.lr_scheduler import OneCycleLR, CosineAnnealingLR, StepLR
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
@@ -109,6 +109,7 @@ class RecognizerTrainer:
         charset_path = Path(__file__).parent.parent / "configs" / self.config['charset']
         self.charset = get_charset(charset_path)
         self.vocab_size = len(self.charset)
+        self.blank_idx = self.vocab_size  # CTC blank token should be after all vocab
         
         # Setup directories
         self.run_id = get_run_id('rec')
@@ -127,7 +128,7 @@ class RecognizerTrainer:
         # Setup training
         self.optimizer = self._setup_optimizer()
         self.scheduler = self._setup_scheduler()
-        self.criterion = nn.CTCLoss(blank=0, zero_infinity=True)
+        self.criterion = nn.CTCLoss(blank=self.blank_idx, zero_infinity=True)
         
         # Training state
         self.start_epoch = 0
@@ -141,10 +142,11 @@ class RecognizerTrainer:
         # Load pretrained model
         model = crnn_mobilenet_v3_small(pretrained=True, vocab=self.charset)
         
-        # Adapt output layer for our vocab size if needed
-        if hasattr(model, 'classifier') and model.classifier[-1].out_features != self.vocab_size:
+        # Adapt output layer for our vocab size + blank token
+        output_size = self.vocab_size + 1  # +1 for CTC blank
+        if hasattr(model, 'classifier') and model.classifier[-1].out_features != output_size:
             in_features = model.classifier[-1].in_features
-            model.classifier[-1] = nn.Linear(in_features, self.vocab_size)
+            model.classifier[-1] = nn.Linear(in_features, output_size)
         
         model = model.to(self.device)
         
@@ -239,24 +241,56 @@ class RecognizerTrainer:
                 steps_per_epoch=steps_per_epoch,
                 pct_start=sched_config['pct_start']
             )
+        elif sched_config['name'] == 'CosineAnnealingLR':
+            scheduler = CosineAnnealingLR(
+                self.optimizer,
+                T_max=sched_config['T_max'],
+                eta_min=sched_config.get('eta_min', 0)
+            )
+        elif sched_config['name'] == 'StepLR':
+            scheduler = StepLR(
+                self.optimizer,
+                step_size=sched_config['step_size'],
+                gamma=sched_config.get('gamma', 0.1)
+            )
         else:
             raise ValueError(f"Unknown scheduler: {sched_config['name']}")
         
         return scheduler
     
     def _calculate_cer(self, preds: List[str], targets: List[str]) -> float:
-        """Calculate Character Error Rate."""
+        """Calculate Character Error Rate using Levenshtein distance."""
         total_chars = 0
         total_errors = 0
         
         for pred, target in zip(preds, targets):
-            # Simple CER calculation (could use edit distance for more accuracy)
             total_chars += len(target)
-            errors = sum(1 for a, b in zip(pred, target) if a != b)
-            errors += abs(len(pred) - len(target))
+            # Use Levenshtein distance for accurate CER
+            errors = self._levenshtein_distance(pred, target)
             total_errors += errors
         
         return total_errors / max(total_chars, 1)
+    
+    def _levenshtein_distance(self, s1: str, s2: str) -> int:
+        """Calculate Levenshtein distance between two strings."""
+        if len(s1) < len(s2):
+            return self._levenshtein_distance(s2, s1)
+        
+        if len(s2) == 0:
+            return len(s1)
+        
+        previous_row = range(len(s2) + 1)
+        for i, c1 in enumerate(s1):
+            current_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                # j+1 instead of j since previous_row and current_row are one character longer
+                insertions = previous_row[j + 1] + 1
+                deletions = current_row[j] + 1
+                substitutions = previous_row[j] + (c1 != c2)
+                current_row.append(min(insertions, deletions, substitutions))
+            previous_row = current_row
+        
+        return previous_row[-1]
     
     def _decode_predictions(self, outputs: torch.Tensor) -> List[str]:
         """Decode CTC outputs to text."""
@@ -276,10 +310,12 @@ class RecognizerTrainer:
             chars = []
             prev = None
             for idx in seq:
-                if idx != 0 and idx != prev:  # 0 is blank
-                    if idx < len(self.charset):
-                        chars.append(self.charset[idx])
-                prev = idx
+                idx_val = idx.item() if hasattr(idx, 'item') else idx
+                # Use correct blank index (vocab_size, not 0)
+                if idx_val != self.blank_idx and idx_val != prev:
+                    if 0 <= idx_val < len(self.charset):
+                        chars.append(self.charset[idx_val])
+                prev = idx_val
             
             decoded.append(''.join(chars))
         
@@ -351,7 +387,9 @@ class RecognizerTrainer:
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
-            self.scheduler.step()
+            # Only step OneCycleLR per batch
+            if self.config['scheduler']['name'] == 'OneCycleLR':
+                self.scheduler.step()
             
             # Update metrics
             total_loss += loss.item()
@@ -507,6 +545,10 @@ class RecognizerTrainer:
                 f"Epoch {epoch}: train_loss={train_loss:.4f}, train_cer={train_cer:.4f}, "
                 f"val_loss={val_loss:.4f}, val_cer={val_cer:.4f}, best_cer={self.best_metric:.4f}"
             )
+            
+            # Step schedulers that update per epoch
+            if self.config['scheduler']['name'] in ['CosineAnnealingLR', 'StepLR']:
+                self.scheduler.step()
         
         self.logger.info("Training completed!")
 
