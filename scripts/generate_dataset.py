@@ -7,7 +7,6 @@ Creates images with text detection annotations and LMDB for recognition.
 import argparse
 import json
 import random
-import string
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import numpy as np
@@ -17,8 +16,13 @@ import albumentations as A
 from tqdm import tqdm
 import lmdb
 import pickle
+from wordfreq import top_n_list
 
-from utils import setup_logger, ensure_dir, load_config, get_charset
+from utils import setup_logger, ensure_dir, load_config, get_charset, STAR_WARS_VOCABULARY
+
+# Default configuration
+DEFAULT_WORDFREQ_LIMIT = 10000  # Top N words from wordfreq to use
+DEFAULT_RANDOM_TEXT_RATIO = 0.05  # 5% random text for robustness, 95% vocabulary text
 
 
 class AurebeshDatasetGenerator:
@@ -28,12 +32,17 @@ class AurebeshDatasetGenerator:
         num_images: int = 20000,
         resolution: int = 1024,
         split_ratio: Tuple[float, float, float] = (0.8, 0.1, 0.1),
-        config_path: Optional[Path] = None
+        config_path: Optional[Path] = None,
+        use_wordfreq: bool = True,
+        wordfreq_limit: int = DEFAULT_WORDFREQ_LIMIT,
+        custom_words: Optional[List[str]] = None
     ):
         self.output_dir = Path(output_dir)
         self.num_images = num_images
         self.resolution = resolution
         self.split_ratio = split_ratio
+        self.use_wordfreq = use_wordfreq
+        self.wordfreq_limit = wordfreq_limit
         
         # Load configuration
         if config_path is None:
@@ -51,6 +60,9 @@ class AurebeshDatasetGenerator:
         
         # Setup logger
         self.logger = setup_logger("generate_dataset", self.output_dir / "logs")
+        
+        # Setup word vocabulary
+        self.word_list = self._setup_vocabulary(custom_words)
         
         # Setup augmentations
         self.augmentations = self._setup_augmentations()
@@ -116,6 +128,32 @@ class AurebeshDatasetGenerator:
         
         return A.Compose(transforms)
     
+    def _setup_vocabulary(self, custom_words: Optional[List[str]] = None) -> List[str]:
+        """Setup word vocabulary from wordfreq and custom words."""
+        vocabulary = []
+        wordfreq_loaded_words = []
+
+        if self.use_wordfreq:
+            # Get top words in English
+            wordfreq_loaded_words = top_n_list('en', self.wordfreq_limit)
+            wordfreq_loaded_words = [word.upper() for word in wordfreq_loaded_words]
+
+        # Add custom words (Star Wars themed)
+        if custom_words is None:
+            custom_words = STAR_WARS_VOCABULARY
+        custom_words = [word.upper() for word in custom_words if word.isalpha()]
+
+        # Merge with vocabulary
+        vocabulary = wordfreq_loaded_words + custom_words
+
+        # Remove duplicates by converting to set
+        vocabulary = list(set(vocabulary))
+
+        self.logger.info(f"Added {len(custom_words)} custom words (excluded {len(wordfreq_loaded_words) + len(custom_words) - len(vocabulary)} duplicates)")
+        self.logger.info(f"Total vocabulary size: {len(vocabulary)} words")
+        
+        return vocabulary
+    
     def _sample_font(self) -> Path:
         """Sample font based on configured probabilities."""
         probs = self.config['style']['font']
@@ -126,22 +164,27 @@ class AurebeshDatasetGenerator:
         return random.choice(self.fonts[category])
     
     def _generate_text(self) -> str:
-        """Generate random Aurebesh text."""
+        """Generate text using vocabulary or random characters."""
         text_config = self.config['style']['text']
         num_words = random.randint(text_config['min_words'], text_config['max_words'])
         
-        words = []
-        for _ in range(num_words):
-            word_len = random.randint(
-                text_config['min_word_length'], 
-                text_config['max_word_length']
-            )
-            # Use only letters from charset (no spaces or numbers for individual words)
-            available_chars = [c for c in self.charset if c.isalpha()]
-            word = ''.join(random.choices(available_chars, k=word_len))
-            words.append(word)
-        
-        return ' '.join(words)
+        if self.word_list and random.random() < (1 - DEFAULT_RANDOM_TEXT_RATIO):  # 95% use vocabulary
+            # Use words from vocabulary
+            words = random.choices(self.word_list, k=num_words)
+            return ' '.join(words)
+        else:
+            words = []
+            for _ in range(num_words):
+                word_len = random.randint(
+                    text_config['min_word_length'], 
+                    text_config['max_word_length']
+                )
+                # Use only letters from charset (no spaces or numbers for individual words)
+                available_chars = [c for c in self.charset if c.isalpha()]
+                word = ''.join(random.choices(available_chars, k=word_len))
+                words.append(word)
+            
+            return ' '.join(words)
     
     def _get_background(self, size: Tuple[int, int]) -> Image.Image:
         """Get background image or generate synthetic one."""
@@ -187,8 +230,8 @@ class AurebeshDatasetGenerator:
         # Create drawing context
         draw = ImageDraw.Draw(bg)
         
-        # Generate multiple text blocks (1-5 per image)
-        num_text_blocks = random.randint(1, 5)
+        # Generate multiple text blocks (1-10 per image)
+        num_text_blocks = random.randint(1, 10)
         annotations = []
         occupied_regions = []  # To avoid overlapping text
         
@@ -523,6 +566,9 @@ def main():
     parser.add_argument("--split_ratio", nargs=3, type=float, default=[0.8, 0.1, 0.1], 
                        help="Train/val/test split ratio")
     parser.add_argument("--config", type=Path, help="Dataset config path")
+    parser.add_argument("--no_wordfreq", action="store_true", help="Disable wordfreq vocabulary")
+    parser.add_argument("--wordfreq_limit", type=int, default=DEFAULT_WORDFREQ_LIMIT, help="Number of wordfreq words to use")
+    parser.add_argument("--custom_words", nargs="+", help="Additional custom words to add")
     
     args = parser.parse_args()
     
@@ -531,7 +577,10 @@ def main():
         num_images=args.num_images,
         resolution=args.resolution,
         split_ratio=args.split_ratio,
-        config_path=args.config
+        config_path=args.config,
+        use_wordfreq=not args.no_wordfreq,
+        wordfreq_limit=args.wordfreq_limit,
+        custom_words=args.custom_words
     )
     
     generator.generate()
