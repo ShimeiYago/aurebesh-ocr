@@ -1,12 +1,24 @@
-epochs: 40
-batch_size: 64
-optimizer:
-  name: AdamW
-  lr: 2.0e-4
-  weight_decay: 1.0e-4
-scheduler:
-  name: OneCycleLR
-  pct_start: 0.3         # 30 % warm-up
-  max_lr: 2.0e-4
-metrics: [cer]
+# Aggressive training configuration for faster convergence
 charset: charset_aurebesh.yaml
+epochs: 60
+batch_size: 32  # Small batch for higher gradient noise
+
+# Optimizer with higher learning rate
+optimizer:
+  name: "AdamW"
+  lr: 3.0e-4  # Higher learning rate
+  weight_decay: 1.0e-5  # Lower weight decay
+
+# Step LR scheduler for more control
+scheduler:
+  name: "StepLR"
+  step_size: 15
+  gamma: 0.5  # Halve LR every 15 epochs
+
+# Metrics to track
+metrics: [cer]
+
+# Early stopping (optional)
+early_stopping:
+  patience: 10
+  min_delta: 0.001

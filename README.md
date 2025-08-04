@@ -93,7 +93,7 @@ python scripts/generate_dataset.py --num_images 20000
 # 2. fine-tune detector (60 epochs)
 python scripts/train_det.py
 
-# 3. fine-tune recogniser (40 epochs)
+# 3. fine-tune recogniser (60 epochs)
 python scripts/train_rec.py
 
 # 4.1. Evaluate Performance for test data

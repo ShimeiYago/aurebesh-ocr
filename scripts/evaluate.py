@@ -101,15 +101,18 @@ class AurebeshEvaluator:
         
         # Adapt output layer if needed
         vocab_size = len(charset)
-        if hasattr(recognizer, 'classifier') and recognizer.classifier[-1].out_features != vocab_size:
+        # Important: Model was trained with vocab_size + 1 outputs (CTC blank at index vocab_size)
+        output_size = vocab_size + 1
+        if hasattr(recognizer, 'classifier') and recognizer.classifier[-1].out_features != output_size:
             in_features = recognizer.classifier[-1].in_features
-            recognizer.classifier[-1] = torch.nn.Linear(in_features, vocab_size)
+            recognizer.classifier[-1] = torch.nn.Linear(in_features, output_size)
         
         recognizer.load_state_dict(rec_ckpt['model_state_dict'])
         recognizer.to(self.device)
         recognizer.eval()
         
         self.charset = charset
+        self.blank_idx = vocab_size  # CTC blank token is at vocab_size
         
         self.logger.info("Loaded detector and recognizer models")
         return detector, recognizer
@@ -214,7 +217,7 @@ class AurebeshEvaluator:
         chars = []
         prev = None
         for idx in preds:
-            if idx != 0 and idx != prev:  # 0 is blank
+            if idx != self.blank_idx and idx != prev:  # blank_idx is vocab_size
                 if idx < len(self.charset):
                     chars.append(self.charset[idx])
             prev = idx
