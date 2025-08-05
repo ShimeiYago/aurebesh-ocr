@@ -35,7 +35,8 @@ class AurebeshDatasetGenerator:
         config_path: Optional[Path] = None,
         use_wordfreq: bool = True,
         wordfreq_limit: int = DEFAULT_WORDFREQ_LIMIT,
-        custom_words: Optional[List[str]] = None
+        custom_words: Optional[List[str]] = None,
+        debug: bool = False
     ):
         self.output_dir = Path(output_dir)
         self.num_images = num_images
@@ -43,6 +44,7 @@ class AurebeshDatasetGenerator:
         self.split_ratio = split_ratio
         self.use_wordfreq = use_wordfreq
         self.wordfreq_limit = wordfreq_limit
+        self.debug = debug
         
         # Load configuration
         if config_path is None:
@@ -80,12 +82,12 @@ class AurebeshDatasetGenerator:
         return fonts
     
     def _setup_augmentations(self) -> A.Compose:
-        """Setup albumentations pipeline."""
+        """Setup albumentations pipeline with bbox transformation support."""
         aug_config = self.config['augmentation']
         
         transforms = []
         
-        # Perspective transform
+        # Perspective transform - this can change bbox coordinates
         if aug_config['perspective']['prob'] > 0:
             deg_range = aug_config['perspective']['degree_range']
             transforms.append(
@@ -95,7 +97,7 @@ class AurebeshDatasetGenerator:
                 )
             )
         
-        # Noise
+        # Noise - doesn't affect bboxes
         if aug_config['noise']['prob'] > 0:
             transforms.append(
                 A.GaussNoise(
@@ -104,7 +106,7 @@ class AurebeshDatasetGenerator:
                 )
             )
         
-        # Blur
+        # Blur - doesn't affect bboxes
         if aug_config['blur']['prob'] > 0:
             kernel_range = aug_config['blur']['kernel_range']
             # Ensure minimum kernel size is 3
@@ -116,7 +118,7 @@ class AurebeshDatasetGenerator:
                 )
             )
         
-        # JPEG compression
+        # JPEG compression - doesn't affect bboxes
         if aug_config['jpeg']['prob'] > 0:
             quality_range = aug_config['jpeg']['quality_range']
             transforms.append(
@@ -126,7 +128,12 @@ class AurebeshDatasetGenerator:
                 )
             )
         
-        return A.Compose(transforms)
+        # Configure bbox parameters for albumentations
+        return A.Compose(transforms, bbox_params=A.BboxParams(
+            format='pascal_voc',  # [x_min, y_min, x_max, y_max]
+            label_fields=['labels'],
+            min_visibility=0.3  # Keep bbox if at least 30% is visible after transformation
+        ))
     
     def _setup_vocabulary(self, custom_words: Optional[List[str]] = None) -> List[str]:
         """Setup word vocabulary from wordfreq and custom words."""
@@ -251,52 +258,92 @@ class AurebeshDatasetGenerator:
             min_font_size = 20
             font_size = random.randint(min_font_size, max_font_size)
             
-            # Try to find a font size that fits
-            for size_attempt in range(5):  # Max 5 attempts to find suitable font size
+            # Try to find a font size that fits with proper margins
+            margin = 50  # Increased margin for safety
+            max_rotation_angle = 15  # Maximum rotation in degrees
+            
+            for size_attempt in range(10):  # More attempts to find suitable font size
                 try:
                     font = ImageFont.truetype(str(font_path), font_size)
                 except:
                     self.logger.warning(f"Failed to load font {font_path}, using default")
                     font = ImageFont.load_default()
                 
-                # Calculate text dimensions
+                # Get accurate text metrics using textbbox
                 bbox = draw.textbbox((0, 0), block_text, font=font)
                 text_width = bbox[2] - bbox[0]
                 text_height = bbox[3] - bbox[1]
                 
-                # Check if text fits in image with margins
-                margin = 20
-                if text_width <= image_size[0] - margin and text_height <= image_size[1] - margin:
+                # Calculate maximum dimensions considering potential rotation
+                import math
+                angle_rad = math.radians(max_rotation_angle)
+                cos_a = abs(math.cos(angle_rad))
+                sin_a = abs(math.sin(angle_rad))
+                
+                # Rotated bounding box dimensions (worst case)
+                rotated_width = text_width * cos_a + text_height * sin_a
+                rotated_height = text_width * sin_a + text_height * cos_a
+                
+                # Check if text fits in image with generous margins
+                if (rotated_width <= image_size[0] - 2 * margin and 
+                    rotated_height <= image_size[1] - 2 * margin):
                     break  # Font size works
                 
                 # Reduce font size for next attempt
-                font_size = max(min_font_size, int(font_size * 0.8))
+                font_size = max(min_font_size, int(font_size * 0.85))
             
             # Skip this text block if still too large
-            if text_width > image_size[0] - 20 or text_height > image_size[1] - 20:
+            if (rotated_width > image_size[0] - 2 * margin or 
+                rotated_height > image_size[1] - 2 * margin):
                 continue
             
             # Text color for this block
             text_color = tuple(random.randint(0, 255) for _ in range(3))
             
-            # Try to find non-overlapping position
-            max_attempts = 50
+            # Decide on rotation first to calculate accurate dimensions
+            effects = self.config['style']['effects']
+            will_rotate = 'rotation_prob' in effects and random.random() < effects['rotation_prob']
+            if will_rotate:
+                rotation_range = effects.get('rotation_range', [-15, 15])
+                angle = random.uniform(rotation_range[0], rotation_range[1])
+                # Use rotated dimensions for placement with extra safety margin
+                # Add 20% extra margin for rotation safety
+                safety_factor = 1.2
+                placement_width = rotated_width * safety_factor
+                placement_height = rotated_height * safety_factor
+            else:
+                angle = 0
+                # Use original text dimensions for placement
+                placement_width = text_width
+                placement_height = text_height
+            
+            # Try to find non-overlapping position with accurate dimensions
+            max_attempts = 100
             placed = False
             
             for attempt in range(max_attempts):
-                max_x = max(10, image_size[0] - text_width - 10)
-                max_y = max(10, image_size[1] - text_height - 10)
+                # Calculate safe placement boundaries with accurate dimensions
+                safe_margin = margin
+                max_x = image_size[0] - int(placement_width) - safe_margin
+                max_y = image_size[1] - int(placement_height) - safe_margin
                 
-                if max_x <= 10 or max_y <= 10:
+                if max_x <= safe_margin or max_y <= safe_margin:
                     break  # Text too large for image
                 
-                x = random.randint(10, max_x)
-                y = random.randint(10, max_y)
+                # Position text with safe margins
+                x = random.randint(safe_margin, max_x)
+                y = random.randint(safe_margin, max_y)
                 
-                # Check overlap with existing text blocks
-                new_region = [x - 5, y - 5, x + text_width + 5, y + text_height + 5]  # Add padding
+                # Check overlap with existing text blocks using larger padding
+                padding = 15
+                new_region = [
+                    x - padding, 
+                    y - padding, 
+                    x + int(placement_width) + padding, 
+                    y + int(placement_height) + padding
+                ]
+                
                 overlap = False
-                
                 for region in occupied_regions:
                     if (new_region[0] < region[2] and new_region[2] > region[0] and
                         new_region[1] < region[3] and new_region[3] > region[1]):
@@ -308,107 +355,139 @@ class AurebeshDatasetGenerator:
                     occupied_regions.append(new_region)
                     placed = True
                     
-                    # Draw text with optional effects
-                    effects = self.config['style']['effects']
-                    
-                    # Check if we should apply rotation
-                    if 'rotation_prob' in effects and random.random() < effects['rotation_prob']:
-                        # Apply rotation
-                        rotation_range = effects.get('rotation_range', [-15, 15])
-                        angle = random.uniform(rotation_range[0], rotation_range[1])
-                        
-                        # Create a temporary image for the text
-                        text_img = Image.new('RGBA', (text_width + 20, text_height + 20), (0, 0, 0, 0))
+                    # Draw text with pre-determined rotation
+                    if will_rotate:
+                        # Create text image with precise dimensions
+                        # Add padding to prevent clipping during rotation
+                        padding = 20
+                        temp_size = (int(text_width) + 2*padding, int(text_height) + 2*padding)
+                        text_img = Image.new('RGBA', temp_size, (0, 0, 0, 0))
                         text_draw = ImageDraw.Draw(text_img)
+                        
+                        # Center text in temporary image
+                        temp_x = padding
+                        temp_y = padding
                         
                         # Draw text with effects on temporary image
                         # Shadow
                         if random.random() < effects['shadow_prob']:
                             shadow_offset = random.randint(2, 5)
                             shadow_color = tuple(int(c * 0.3) for c in text_color) + (255,)
-                            text_draw.text((10 + shadow_offset, 10 + shadow_offset), block_text, font=font, fill=shadow_color)
+                            text_draw.text((temp_x + shadow_offset, temp_y + shadow_offset), 
+                                         block_text, font=font, fill=shadow_color)
                         
                         # Border
                         if random.random() < effects['border_prob']:
                             for dx in [-1, 0, 1]:
                                 for dy in [-1, 0, 1]:
                                     if dx != 0 or dy != 0:
-                                        text_draw.text((10 + dx, 10 + dy), block_text, font=font, fill=(0, 0, 0, 255))
+                                        text_draw.text((temp_x + dx, temp_y + dy), 
+                                                     block_text, font=font, fill=(0, 0, 0, 255))
                         
                         # Main text
-                        text_draw.text((10, 10), block_text, font=font, fill=text_color + (255,))
+                        text_draw.text((temp_x, temp_y), block_text, font=font, fill=text_color + (255,))
                         
                         # Rotate the text image
                         rotated_text = text_img.rotate(-angle, expand=True, fillcolor=(0, 0, 0, 0))
                         
-                        # Calculate new position after rotation
+                        # Calculate precise paste position
                         rot_w, rot_h = rotated_text.size
-                        paste_x = max(0, x - (rot_w - text_width) // 2)
-                        paste_y = max(0, y - (rot_h - text_height) // 2)
+                        
+                        # Center the rotated text within the allocated region
+                        paste_x = x + int(placement_width - rot_w) // 2
+                        paste_y = y + int(placement_height - rot_h) // 2
+                        
+                        # Final boundary check - if rotated text would exceed bounds, skip this text
+                        if (paste_x < 0 or paste_y < 0 or 
+                            paste_x + rot_w > image_size[0] or 
+                            paste_y + rot_h > image_size[1]):
+                            continue  # Skip this text block
                         
                         # Paste rotated text onto background
                         bg.paste(rotated_text, (paste_x, paste_y), rotated_text)
                         
-                        # Update bounding box for rotated text
-                        # Calculate the four corners of the rotated rectangle
-                        import math
-                        cx, cy = x + text_width/2, y + text_height/2  # center
-                        cos_a = math.cos(math.radians(angle))
-                        sin_a = math.sin(math.radians(angle))
+                        # Find actual non-transparent pixels to create accurate bbox
+                        # Convert rotated text to numpy for easier processing
+                        rot_array = np.array(rotated_text)
+                        alpha_channel = rot_array[:, :, 3]  # Alpha channel
                         
-                        # Four corners before rotation (relative to center)
-                        corners = [
-                            (-text_width/2, -text_height/2),
-                            (text_width/2, -text_height/2),
-                            (text_width/2, text_height/2),
-                            (-text_width/2, text_height/2)
-                        ]
+                        # Find bounds of non-transparent pixels
+                        y_indices, x_indices = np.where(alpha_channel > 0)
                         
-                        # Rotate corners
-                        rotated_corners = []
-                        for dx, dy in corners:
-                            rx = dx * cos_a - dy * sin_a + cx
-                            ry = dx * sin_a + dy * cos_a + cy
-                            rotated_corners.append([int(rx), int(ry)])
-                        
-                        # Create annotation with rotated polygon
-                        annotation = {
-                            'text': block_text,
-                            'bbox': [
-                                int(min(c[0] for c in rotated_corners)),
-                                int(min(c[1] for c in rotated_corners)),
-                                int(max(c[0] for c in rotated_corners)),
-                                int(max(c[1] for c in rotated_corners))
-                            ],
-                            'polygon': rotated_corners  # Already a list of [x, y] pairs
-                        }
+                        if len(x_indices) > 0 and len(y_indices) > 0:
+                            # Calculate actual text bounds relative to paste position
+                            actual_x1 = paste_x + np.min(x_indices)
+                            actual_y1 = paste_y + np.min(y_indices)
+                            actual_x2 = paste_x + np.max(x_indices) + 1
+                            actual_y2 = paste_y + np.max(y_indices) + 1
+                            
+                            # Check if text bounds are within image (skip if outside)
+                            if (actual_x1 < 0 or actual_y1 < 0 or 
+                                actual_x2 > image_size[0] or actual_y2 > image_size[1]):
+                                continue  # Skip this text block if it extends outside image bounds
+                            
+                            # Create annotation with actual bounds (no clamping)
+                            annotation = {
+                                'text': block_text,
+                                'bbox': [actual_x1, actual_y1, actual_x2, actual_y2],
+                                'polygon': [
+                                    [actual_x1, actual_y1],
+                                    [actual_x2, actual_y1],
+                                    [actual_x2, actual_y2],
+                                    [actual_x1, actual_y2]
+                                ]
+                            }
+                        else:
+                            # Skip if no visible pixels
+                            continue
                     else:
-                        # No rotation - original code
+                        # No rotation - improved non-rotated text placement
+                        # Calculate precise text position with baseline considerations
+                        # Get accurate text metrics
+                        bbox = draw.textbbox((0, 0), block_text, font=font)
+                        actual_x_offset = -bbox[0]  # Left bearing
+                        actual_y_offset = -bbox[1]  # Top bearing
+                        
+                        # Adjust position to account for font metrics
+                        text_x = x + actual_x_offset
+                        text_y = y + actual_y_offset
+                        
+                        # Final boundary check - ensure text won't exceed image bounds
+                        final_bbox_check = draw.textbbox((text_x, text_y), block_text, font=font)
+                        if (final_bbox_check[0] < 0 or final_bbox_check[1] < 0 or
+                            final_bbox_check[2] > image_size[0] or final_bbox_check[3] > image_size[1]):
+                            continue  # Skip this text block
+                        
                         # Shadow
                         if random.random() < effects['shadow_prob']:
                             shadow_offset = random.randint(2, 5)
                             shadow_color = tuple(int(c * 0.3) for c in text_color)
-                            draw.text((x + shadow_offset, y + shadow_offset), block_text, font=font, fill=shadow_color)
+                            draw.text((text_x + shadow_offset, text_y + shadow_offset), 
+                                    block_text, font=font, fill=shadow_color)
                         
                         # Border
                         if random.random() < effects['border_prob']:
                             for dx in [-1, 0, 1]:
                                 for dy in [-1, 0, 1]:
                                     if dx != 0 or dy != 0:
-                                        draw.text((x + dx, y + dy), block_text, font=font, fill=(0, 0, 0))
+                                        draw.text((text_x + dx, text_y + dy), 
+                                                block_text, font=font, fill=(0, 0, 0))
                         
                         # Main text
-                        draw.text((x, y), block_text, font=font, fill=text_color)
+                        draw.text((text_x, text_y), block_text, font=font, fill=text_color)
                         
-                        # Create annotation
+                        # Create precise bounding box using actual text metrics
+                        final_bbox = draw.textbbox((text_x, text_y), block_text, font=font)
+                        
+                        # Create annotation with precise coordinates (no clamping needed)
                         annotation = {
                             'text': block_text,
-                            'bbox': [x, y, x + text_width, y + text_height],
+                            'bbox': [final_bbox[0], final_bbox[1], final_bbox[2], final_bbox[3]],
                             'polygon': [
-                                [x, y],
-                                [x + text_width, y],
-                                [x + text_width, y + text_height],
-                                [x, y + text_height]
+                                [final_bbox[0], final_bbox[1]],
+                                [final_bbox[2], final_bbox[1]],
+                                [final_bbox[2], final_bbox[3]],
+                                [final_bbox[0], final_bbox[3]]
                             ]
                         }
                     
@@ -417,6 +496,29 @@ class AurebeshDatasetGenerator:
         
         return bg, annotations
     
+    def _save_debug_image(self, image: Image.Image, annotations: List[Dict], output_path: Path):
+        """Save image with bounding boxes drawn for debugging."""
+        debug_img = image.copy()
+        draw = ImageDraw.Draw(debug_img)
+        
+        for ann in annotations:
+            bbox = ann['bbox']
+            polygon = ann['polygon']
+            
+            # Draw bounding box in red
+            draw.rectangle(bbox, outline='red', width=2)
+            
+            # Draw polygon in blue
+            if len(polygon) >= 3:
+                flat_polygon = [coord for point in polygon for coord in point]
+                draw.polygon(flat_polygon, outline='blue', width=2)
+            
+            # Draw text label
+            text_pos = (bbox[0], bbox[1] - 20)
+            draw.text(text_pos, ann['text'][:20], fill='yellow')
+        
+        debug_img.save(output_path)
+
     def _save_lmdb(self, image: Image.Image, text: str, lmdb_env, lmdb_idx: int):
         """Save cropped text image to LMDB for recognizer."""
         # Convert to bytes
@@ -493,15 +595,69 @@ class AurebeshDatasetGenerator:
                         self.logger.warning(f"No text placed on image attempt {attempts}, retrying...")
                         continue
                     
-                    # Apply augmentations
+                    # Apply augmentations with bbox transformation
                     image_np = np.array(image)
-                    augmented = self.augmentations(image=image_np)
+                    
+                    # Prepare bboxes for albumentations (convert to pascal_voc format)
+                    bboxes = []
+                    labels = []
+                    for i, ann in enumerate(text_annotations):
+                        # Convert from [x1, y1, x2, y2] to pascal_voc format [x_min, y_min, x_max, y_max]
+                        bbox = ann['bbox']
+                        bboxes.append([bbox[0], bbox[1], bbox[2], bbox[3]])
+                        labels.append(i)  # Use index as label
+                    
+                    # Apply augmentations
+                    augmented = self.augmentations(
+                        image=image_np,
+                        bboxes=bboxes,
+                        labels=labels
+                    )
+                    
                     image_aug = Image.fromarray(augmented['image'])
+                    augmented_bboxes = augmented['bboxes']
+                    augmented_labels = augmented['labels']
+                    
+                    # Update text_annotations with transformed bboxes
+                    updated_annotations = []
+                    for i, (bbox, label) in enumerate(zip(augmented_bboxes, augmented_labels)):
+                        # Get original annotation (ensure label is integer)
+                        label_idx = int(label)
+                        orig_ann = text_annotations[label_idx]
+                        
+                        # Convert bbox coordinates to integers
+                        x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+                        
+                        # Skip if bbox is outside image boundaries (text was pushed out by augmentation)
+                        if (x1 < 0 or y1 < 0 or x2 > self.resolution or y2 > self.resolution or
+                            x2 <= x1 or y2 <= y1):
+                            continue  # Skip augmented text that's outside bounds
+                        
+                        # Update bbox coordinates (no clamping)
+                        updated_ann = orig_ann.copy()
+                        updated_ann['bbox'] = [x1, y1, x2, y2]
+                        
+                        # Update polygon
+                        updated_ann['polygon'] = [
+                            [x1, y1], [x2, y1], [x2, y2], [x1, y2]
+                        ]
+                        
+                        updated_annotations.append(updated_ann)
+                    
+                    # Use updated annotations for saving
+                    text_annotations = updated_annotations
                     
                     # Save detection image
                     image_name = f"{split_name}_{generated_count:06d}.png"
                     image_path = images_dir / image_name
                     image_aug.save(image_path)
+                    
+                    # Save debug image with bboxes (if debug mode enabled)
+                    if self.debug and generated_count < 20:  # Save debug for first 20 images
+                        debug_dir = ensure_dir(split_dir / 'debug')
+                        debug_name = f"{split_name}_{generated_count:06d}_debug.png"
+                        debug_path = debug_dir / debug_name
+                        self._save_debug_image(image_aug, text_annotations, debug_path)
                     
                     # Add to COCO annotations
                     image_info = {
@@ -569,6 +725,7 @@ def main():
     parser.add_argument("--no_wordfreq", action="store_true", help="Disable wordfreq vocabulary")
     parser.add_argument("--wordfreq_limit", type=int, default=DEFAULT_WORDFREQ_LIMIT, help="Number of wordfreq words to use")
     parser.add_argument("--custom_words", nargs="+", help="Additional custom words to add")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode with bbox visualization")
     
     args = parser.parse_args()
     
@@ -580,7 +737,8 @@ def main():
         config_path=args.config,
         use_wordfreq=not args.no_wordfreq,
         wordfreq_limit=args.wordfreq_limit,
-        custom_words=args.custom_words
+        custom_words=args.custom_words,
+        debug=args.debug
     )
     
     generator.generate()
