@@ -17,6 +17,9 @@ style:
   layout:
     spacing_range: [0.8, 1.2]
     line_spacing_range: [0.9, 1.1]
+    min_text_spacing: 30  # Minimum pixels between text blocks (reduced for more blocks)
+    max_text_blocks: 10   # Maximum number of text blocks per image
+    adaptive_spacing: true  # Enable adaptive spacing based on number of blocks
     
   # Color parameters
   color:

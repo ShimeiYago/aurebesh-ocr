@@ -193,6 +193,38 @@ class AurebeshDatasetGenerator:
             
             return ' '.join(words)
     
+    def _create_spatial_grid(self, image_size: Tuple[int, int], cell_size: int = 100) -> List[List[bool]]:
+        """Create a spatial grid to track occupied regions for efficient placement."""
+        grid_width = (image_size[0] + cell_size - 1) // cell_size
+        grid_height = (image_size[1] + cell_size - 1) // cell_size
+        return [[False for _ in range(grid_width)] for _ in range(grid_height)]
+    
+    def _mark_grid_occupied(self, grid: List[List[bool]], bbox: List[int], cell_size: int = 100):
+        """Mark grid cells as occupied by a bounding box."""
+        x1, y1, x2, y2 = bbox
+        start_row = max(0, y1 // cell_size)
+        end_row = min(len(grid), (y2 + cell_size - 1) // cell_size)
+        start_col = max(0, x1 // cell_size)
+        end_col = min(len(grid[0]), (x2 + cell_size - 1) // cell_size)
+        
+        for row in range(start_row, end_row):
+            for col in range(start_col, end_col):
+                grid[row][col] = True
+    
+    def _check_grid_available(self, grid: List[List[bool]], bbox: List[int], cell_size: int = 100) -> bool:
+        """Check if grid cells for a bounding box are available."""
+        x1, y1, x2, y2 = bbox
+        start_row = max(0, y1 // cell_size)
+        end_row = min(len(grid), (y2 + cell_size - 1) // cell_size)
+        start_col = max(0, x1 // cell_size)
+        end_col = min(len(grid[0]), (x2 + cell_size - 1) // cell_size)
+        
+        for row in range(start_row, end_row):
+            for col in range(start_col, end_col):
+                if grid[row][col]:
+                    return False
+        return True
+    
     def _get_background(self, size: Tuple[int, int]) -> Image.Image:
         """Get background image or generate synthetic one."""
         if random.random() < self.config['style']['color']['synthetic_bg_prob']:
@@ -237,10 +269,27 @@ class AurebeshDatasetGenerator:
         # Create drawing context
         draw = ImageDraw.Draw(bg)
         
-        # Generate multiple text blocks (1-10 per image)
-        num_text_blocks = random.randint(1, 10)
+        # Generate multiple text blocks based on config
+        layout_config = self.config['style']['layout']
+        max_blocks = layout_config.get('max_text_blocks', 10)
+        num_text_blocks = random.randint(1, max_blocks)
         annotations = []
         occupied_regions = []  # To avoid overlapping text
+        
+        # Adaptive spacing based on number of blocks
+        base_min_spacing = layout_config.get('min_text_spacing', 30)
+        adaptive_spacing = layout_config.get('adaptive_spacing', True)
+        if adaptive_spacing and num_text_blocks > 5:
+            # Reduce spacing for more blocks, but keep a minimum
+            spacing_factor = max(0.5, 1.0 - (num_text_blocks - 5) * 0.1)
+            min_spacing = max(20, int(base_min_spacing * spacing_factor))
+        else:
+            min_spacing = base_min_spacing
+        
+        # Create spatial grid for efficient placement tracking
+        # Use finer grid for more blocks
+        grid_cell_size = 30 if num_text_blocks > 5 else 50
+        spatial_grid = self._create_spatial_grid(image_size, cell_size=grid_cell_size)
         
         for block_idx in range(num_text_blocks):
             # Generate text for this block (or use provided text for first block)
@@ -253,9 +302,20 @@ class AurebeshDatasetGenerator:
             if block_idx > 0:
                 font_path = self._sample_font()
             
-            # Setup font with varying sizes - try to fit text in image
-            max_font_size = 80
-            min_font_size = 20
+            # Setup font with varying sizes - adapt based on number of blocks
+            if num_text_blocks > 7:
+                # Many blocks - use smaller fonts
+                max_font_size = 50
+                min_font_size = 20
+            elif num_text_blocks > 4:
+                # Medium number of blocks
+                max_font_size = 65
+                min_font_size = 25
+            else:
+                # Few blocks - can use larger fonts
+                max_font_size = 80
+                min_font_size = 30
+            
             font_size = random.randint(min_font_size, max_font_size)
             
             # Try to find a font size that fits with proper margins
@@ -334,8 +394,8 @@ class AurebeshDatasetGenerator:
                 x = random.randint(safe_margin, max_x)
                 y = random.randint(safe_margin, max_y)
                 
-                # Check overlap with existing text blocks using larger padding
-                padding = 15
+                # Check overlap with existing text blocks using adaptive spacing
+                padding = min_spacing  # Use the adaptive spacing calculated earlier
                 new_region = [
                     x - padding, 
                     y - padding, 
@@ -343,6 +403,12 @@ class AurebeshDatasetGenerator:
                     y + int(placement_height) + padding
                 ]
                 
+                # First check spatial grid for quick rejection
+                grid_bbox = [x, y, x + int(placement_width), y + int(placement_height)]
+                if not self._check_grid_available(spatial_grid, grid_bbox, grid_cell_size):
+                    continue
+                
+                # Then check detailed overlap with padding
                 overlap = False
                 for region in occupied_regions:
                     if (new_region[0] < region[2] and new_region[2] > region[0] and
@@ -353,7 +419,9 @@ class AurebeshDatasetGenerator:
                 if not overlap or attempt == max_attempts - 1:
                     # Found non-overlapping position or last attempt
                     occupied_regions.append(new_region)
-                    placed = True
+                    
+                    # Mark spatial grid as occupied
+                    self._mark_grid_occupied(spatial_grid, new_region, grid_cell_size)
                     
                     # Draw text with pre-determined rotation
                     if will_rotate:
