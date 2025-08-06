@@ -259,7 +259,7 @@ class AurebeshDatasetGenerator:
             font_size = random.randint(min_font_size, max_font_size)
             
             # Try to find a font size that fits with proper margins
-            margin = 50  # Increased margin for safety
+            margin = 150  # Increased margin for safety to prevent text cutoff after augmentation
             max_rotation_angle = 15  # Maximum rotation in degrees
             
             for size_attempt in range(10):  # More attempts to find suitable font size
@@ -629,9 +629,13 @@ class AurebeshDatasetGenerator:
                         x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
                         
                         # Skip if bbox is outside image boundaries (text was pushed out by augmentation)
+                        # Also skip if too close to edge to prevent text cutoff
+                        safety_margin = 10
                         if (x1 < 0 or y1 < 0 or x2 > self.resolution or y2 > self.resolution or
-                            x2 <= x1 or y2 <= y1):
-                            continue  # Skip augmented text that's outside bounds
+                            x2 <= x1 or y2 <= y1 or
+                            x1 < safety_margin or y1 < safety_margin or 
+                            x2 > self.resolution - safety_margin or y2 > self.resolution - safety_margin):
+                            continue  # Skip augmented text that's outside bounds or too close to edge
                         
                         # Update bbox coordinates (no clamping)
                         updated_ann = orig_ann.copy()
@@ -672,6 +676,15 @@ class AurebeshDatasetGenerator:
                     for ann_idx, ann in enumerate(text_annotations):
                         # Crop text region for recognizer
                         bbox = ann['bbox']
+                        
+                        # Skip if bbox is outside image boundaries
+                        # Add safety margin to prevent text cutoff at boundaries
+                        safety_margin = 10
+                        if (bbox[0] < 0 or bbox[1] < 0 or 
+                            bbox[2] > self.resolution or bbox[3] > self.resolution):
+                            self.logger.debug(f"Skipping out-of-bounds text during crop: {ann['text']}")
+                            continue
+                        
                         text_crop = image_aug.crop(bbox)
                         
                         # Save to LMDB with unique index
