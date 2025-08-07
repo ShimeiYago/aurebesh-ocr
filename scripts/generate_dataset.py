@@ -669,11 +669,31 @@ class AurebeshDatasetGenerator:
                     # Prepare bboxes for albumentations (convert to pascal_voc format)
                     bboxes = []
                     labels = []
+                    valid_annotations = []
+                    
                     for i, ann in enumerate(text_annotations):
                         # Convert from [x1, y1, x2, y2] to pascal_voc format [x_min, y_min, x_max, y_max]
                         bbox = ann['bbox']
+                        
+                        # Skip degenerate bboxes (width or height <= 0)
+                        if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
+                            self.logger.warning(f"Skipping degenerate bbox: {bbox}")
+                            continue
+                        
+                        # Also skip very small bboxes that might cause issues
+                        min_size = 5  # Minimum width/height in pixels
+                        if (bbox[2] - bbox[0] < min_size) or (bbox[3] - bbox[1] < min_size):
+                            self.logger.warning(f"Skipping too small bbox: {bbox}")
+                            continue
+                        
                         bboxes.append([bbox[0], bbox[1], bbox[2], bbox[3]])
-                        labels.append(i)  # Use index as label
+                        labels.append(len(valid_annotations))  # Use valid annotation index
+                        valid_annotations.append(ann)
+                    
+                    # Skip if no valid bboxes remain
+                    if not bboxes:
+                        self.logger.warning("No valid bboxes after filtering, retrying...")
+                        continue
                     
                     # Apply augmentations
                     augmented = self.augmentations(
@@ -691,7 +711,7 @@ class AurebeshDatasetGenerator:
                     for i, (bbox, label) in enumerate(zip(augmented_bboxes, augmented_labels)):
                         # Get original annotation (ensure label is integer)
                         label_idx = int(label)
-                        orig_ann = text_annotations[label_idx]
+                        orig_ann = valid_annotations[label_idx]
                         
                         # Convert bbox coordinates to integers
                         x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
