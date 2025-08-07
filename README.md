@@ -88,7 +88,7 @@ data/real/annotations.json  # COCO polygons + transcripts per image
 
 ```bash
 # 1. synthetic dataset (20 k images)
-python scripts/generate_dataset.py --num_images 20000
+python scripts/generate_dataset.py --num_images 30000
 
 # 2. fine-tune detector (60 epochs)
 python scripts/train_det.py
