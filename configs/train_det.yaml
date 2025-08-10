@@ -1,6 +1,6 @@
-epochs: 60
-batch_size: 4            # gradient_accumulation=4 → eff 16
-amp: True                # torch.cuda.amp autocast (MPS-safe)
+epochs: 40
+batch_size: 4
+amp: True
 optimizer:
   name: AdamW
   lr: 1.0e-4

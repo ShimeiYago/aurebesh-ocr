@@ -46,7 +46,6 @@ Copy your `.otf / .ttf` fonts into the style buckets:
 ```
 assets/fonts/core/     # canonical fonts
 assets/fonts/variant/  # bold / italic / condensed
-assets/fonts/fancy/    # decorative / graffiti
 ```
 
 **Recommended fonts**
@@ -60,9 +59,6 @@ assets/fonts/fancy/    # decorative / graffiti
 | Variant  | **FT Aurebesh – Black**          | SIL OFL 1.1                                 | [DeeFont](https://www.deefont.com/ft-aurebesh-font-family/)           |
 |          | **Aurebesh Font – Italic**       | Freeware, commercial use requires donation  | [FontSpace](https://www.fontspace.com/aurebesh-font-f17959)           |
 |          | **Aurek-Besh – Narrow**          | Freeware                                    | [FontSpace](https://www.fontspace.com/aurek-besh-font-f9639)          |
-| Fancy    | **Naboo AF Aurebesh**            | Public Domain                               | [FontSpace](https://www.fontspace.com/naboo-af-aurebesh-font-f118825) |
-|          | **Droidobesh Depot**             | Public Domain                               | [FontSpace](https://www.fontspace.com/droidobesh-depot-font-f55049)   |
-|          | **Aurebesh Racer AF – Regular**  | CC0 Public Domain                           | [CufonFonts](https://www.cufonfonts.com/font/aurebesh-racer-af)       |
 
 
 ### 2. Place background images
@@ -90,7 +86,7 @@ data/real/annotations.json  # COCO polygons + transcripts per image
 # 1. synthetic dataset (20 k images)
 python scripts/generate_dataset.py --num_images 30000
 
-# 2. fine-tune detector (60 epochs)
+# 2. fine-tune detector (40 epochs)
 python scripts/train_det.py
 
 # 3. fine-tune recogniser (60 epochs)
@@ -129,21 +125,23 @@ You can customize the behavior of the OCR pipeline by editing the configuration 
 ### `train_det.yaml`
 - **Purpose**: Detection model training configuration
 - **Key settings**:
-  - `epochs`: 60 (default)
-  - `batch_size`: 4 with gradient accumulation
-  - `optimizer`: AdamW with learning rate 1e-4
-  - `scheduler`: CosineAnnealingLR with 5-epoch warmup
+  - `epochs`: 40
+  - `batch_size`: 4
+  - `optimizer`: AdamW with learning rate 1e-4, weight decay 1e-4
+  - `scheduler`: CosineAnnealingLR with 5-epoch warmup, eta_min 1e-6
   - `amp`: Automatic Mixed Precision enabled
+  - `metrics`: mAP@50
 
 ### `train_rec.yaml`
-- **Purpose**: Recognition model training configuration
+- **Purpose**: Recognition model training configuration (aggressive training for faster convergence)
 - **Key settings**:
-  - `epochs`: 40 (default)
-  - `batch_size`: 64
-  - `optimizer`: AdamW with learning rate 2e-4
-  - `scheduler`: OneCycleLR with 30% warmup
+  - `epochs`: 60
+  - `batch_size`: 32 (smaller batch for higher gradient noise)
+  - `optimizer`: AdamW with learning rate 3e-4, weight decay 1e-5
+  - `scheduler`: StepLR (halve LR every 15 epochs)
   - `metrics`: Character Error Rate (CER)
   - `charset`: Links to `charset_aurebesh.yaml`
+  - `early_stopping`: patience 10, min_delta 0.001
 
 To modify training behavior, edit the relevant YAML file before running the training scripts.
 

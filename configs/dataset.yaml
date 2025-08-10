@@ -4,7 +4,6 @@ style:
     # Font sampling probabilities
     core_prob: 0.7
     variant_prob: 0.3
-    fancy_prob: 0.0
   
   # Text generation parameters
   text:
