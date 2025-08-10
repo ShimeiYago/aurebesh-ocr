@@ -192,6 +192,8 @@ class AurebeshOCR:
         """Run complete OCR pipeline on image."""
         # Load image
         image = cv2.imread(str(image_path))
+        if image is None:
+            raise ValueError(f"Could not load image from: {image_path}")
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
         # Run detection
@@ -255,7 +257,7 @@ class AurebeshOCR:
 
 def main():
     parser = argparse.ArgumentParser(description="Run Aurebesh OCR inference on an image")
-    parser.add_argument("--img_path", type=Path, required=True, help="Path to input image")
+    parser.add_argument("--img_path", type=Path, required=True, help="Path to input image or directory containing images")
     parser.add_argument("--det_ckpt", type=Path, default="outputs/weights/det/best.pt", help="Detector checkpoint path")
     parser.add_argument("--rec_ckpt", type=Path, default="outputs/weights/rec/best.pt", help="Recognizer checkpoint path")
     parser.add_argument("--output_dir", type=Path, help="Output directory (optional)")
@@ -288,38 +290,79 @@ def main():
         device=args.device
     )
     
-    # Run OCR
-    results, vis_image = ocr.run_ocr(args.img_path)
-    
-    # Print results to stdout
-    print(f"\nDetected {len(results)} text regions:")
-    for i, result in enumerate(results):
-        print(f"{i+1}. '{result['text']}' at {result['box']} (conf: {result['confidence']:.3f})")
-    
-    # Save outputs if requested
-    if args.output_dir:
-        output_dir = Path(args.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+    # Determine input images
+    img_path = args.img_path
+    if not img_path.is_absolute():
+        img_path = project_root / img_path
         
-        # Save visualization
-        base_name = args.img_path.stem
-        vis_path = output_dir / f"{base_name}_result.png"
-        cv2.imwrite(str(vis_path), vis_image)
-        print(f"\nVisualization saved to: {vis_path}")
+    if img_path.is_dir():
+        # Process all images in directory
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
+        image_files = []
         
-        # Save JSON if requested
-        if args.save_json:
-            json_path = output_dir / f"{base_name}_result.json"
-            with open(json_path, 'w') as f:
-                json.dump(results, f, indent=2)
-            print(f"Results saved to: {json_path}")
+        # Look for images in the directory
+        for ext in image_extensions:
+            image_files.extend(img_path.glob(f"*{ext}"))
+            image_files.extend(img_path.glob(f"*{ext.upper()}"))
+        
+        # Also check in 'images' subdirectory if it exists
+        images_subdir = img_path / 'images'
+        if images_subdir.exists():
+            for ext in image_extensions:
+                image_files.extend(images_subdir.glob(f"*{ext}"))
+                image_files.extend(images_subdir.glob(f"*{ext.upper()}"))
+        
+        if not image_files:
+            raise ValueError(f"No image files found in directory: {img_path}")
+        
+        print(f"Found {len(image_files)} image files to process")
+        
+    elif img_path.is_file():
+        image_files = [img_path]
+    else:
+        raise FileNotFoundError(f"Input path does not exist: {img_path}")
     
-    # Display if requested
-    if args.show:
-        cv2.imshow("Aurebesh OCR Result", vis_image)
-        print("\nPress any key to close the window...")
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+    # Process each image
+    for image_file in image_files:
+        print(f"\nProcessing: {image_file.name}")
+        
+        try:
+            # Run OCR
+            results, vis_image = ocr.run_ocr(image_file)
+            
+            # Print results to stdout
+            print(f"Detected {len(results)} text regions:")
+            for i, result in enumerate(results):
+                print(f"  {i+1}. '{result['text']}' at {result['box']} (conf: {result['confidence']:.3f})")
+            
+            # Save outputs if requested
+            if args.output_dir:
+                output_dir = Path(args.output_dir)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Save visualization
+                base_name = image_file.stem
+                vis_path = output_dir / f"{base_name}_result.png"
+                cv2.imwrite(str(vis_path), vis_image)
+                print(f"  Visualization saved to: {vis_path}")
+                
+                # Save JSON if requested
+                if args.save_json:
+                    json_path = output_dir / f"{base_name}_result.json"
+                    with open(json_path, 'w') as f:
+                        json.dump(results, f, indent=2)
+                    print(f"  Results saved to: {json_path}")
+            
+            # Display if requested (only for single image)
+            if args.show and len(image_files) == 1:
+                cv2.imshow("Aurebesh OCR Result", vis_image)
+                print("\nPress any key to close the window...")
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
+                
+        except Exception as e:
+            print(f"  Error processing {image_file.name}: {e}")
+            continue
 
 
 if __name__ == "__main__":
