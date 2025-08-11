@@ -270,30 +270,280 @@ class AurebeshDatasetGenerator:
     def _get_background(self, size: Tuple[int, int]) -> Image.Image:
         """Get background image or generate synthetic one."""
         if random.random() < self.config['style']['color']['synthetic_bg_prob']:
-            # Generate synthetic background
-            bg = Image.new('RGB', size)
-            draw = ImageDraw.Draw(bg)
+            # Generate synthetic background based on pattern probabilities
+            patterns_config = self.config['style']['color']['synthetic_patterns']
+            pattern_names = list(patterns_config.keys())
+            pattern_probs = [patterns_config[name] for name in pattern_names]
             
-            if random.random() < 0.5:
-                # Solid color
-                color = tuple(random.randint(0, 255) for _ in range(3))
-                draw.rectangle([0, 0, size[0], size[1]], fill=color)
+            # Choose pattern based on probabilities
+            pattern = random.choices(pattern_names, weights=pattern_probs)[0]
+            
+            if pattern == 'solid_color':
+                return self._generate_solid_color_bg(size)
+            elif pattern == 'gradient':
+                return self._generate_gradient_bg(size)
+            elif pattern == 'random_lines':
+                return self._generate_random_lines_bg(size)
+            elif pattern == 'geometric_shapes':
+                return self._generate_geometric_shapes_bg(size)
+            elif pattern == 'noise_texture':
+                return self._generate_noise_texture_bg(size)
+            elif pattern == 'pseudo_characters':
+                return self._generate_pseudo_characters_bg(size)
             else:
-                # Gradient
-                for y in range(size[1]):
-                    color = tuple(
-                        int(128 + 127 * np.sin(y / size[1] * np.pi + random.random() * 2 * np.pi))
-                        for _ in range(3)
-                    )
-                    draw.line([(0, y), (size[0], y)], fill=color)
-            
-            return bg
+                # Fallback to solid color
+                return self._generate_solid_color_bg(size)
         else:
             # Use real background
             bg_path = random.choice(self.backgrounds)
             bg = Image.open(bg_path).convert('RGB')
             bg = bg.resize(size, Image.Resampling.LANCZOS)
             return bg
+    
+    def _generate_solid_color_bg(self, size: Tuple[int, int]) -> Image.Image:
+        """Generate solid color background."""
+        bg = Image.new('RGB', size)
+        draw = ImageDraw.Draw(bg)
+        color = tuple(random.randint(0, 255) for _ in range(3))
+        draw.rectangle([0, 0, size[0], size[1]], fill=color)
+        return bg
+    
+    def _generate_gradient_bg(self, size: Tuple[int, int]) -> Image.Image:
+        """Generate gradient background."""
+        bg = Image.new('RGB', size)
+        draw = ImageDraw.Draw(bg)
+        
+        # Choose gradient direction
+        if random.random() < 0.5:
+            # Vertical gradient
+            for y in range(size[1]):
+                color = tuple(
+                    int(128 + 127 * np.sin(y / size[1] * np.pi + random.random() * 2 * np.pi))
+                    for _ in range(3)
+                )
+                draw.line([(0, y), (size[0], y)], fill=color)
+        else:
+            # Horizontal gradient
+            for x in range(size[0]):
+                color = tuple(
+                    int(128 + 127 * np.sin(x / size[0] * np.pi + random.random() * 2 * np.pi))
+                    for _ in range(3)
+                )
+                draw.line([(x, 0), (x, size[1])], fill=color)
+        
+        return bg
+    
+    def _generate_random_lines_bg(self, size: Tuple[int, int]) -> Image.Image:
+        """Generate background with random lines and curves that resemble character strokes."""
+        bg = Image.new('RGB', size)
+        draw = ImageDraw.Draw(bg)
+        
+        # Base background color
+        base_color = tuple(random.randint(180, 255) for _ in range(3))
+        draw.rectangle([0, 0, size[0], size[1]], fill=base_color)
+        
+        # Add random lines
+        num_lines = random.randint(20, 40)
+        for _ in range(num_lines):
+            # Line color - similar contrast to text
+            line_color = tuple(random.randint(0, 150) for _ in range(3))
+            
+            # Line width similar to character strokes
+            line_width = random.randint(2, 5)
+            
+            # Choose line type
+            if random.random() < 0.5:
+                # Straight line
+                x1, y1 = random.randint(0, size[0]), random.randint(0, size[1])
+                x2, y2 = random.randint(0, size[0]), random.randint(0, size[1])
+                draw.line([(x1, y1), (x2, y2)], fill=line_color, width=line_width)
+            else:
+                # Curved line (using bezier curve approximation)
+                points = []
+                num_points = random.randint(3, 6)
+                for _ in range(num_points):
+                    x = random.randint(0, size[0])
+                    y = random.randint(0, size[1])
+                    points.append((x, y))
+                
+                # Draw curve as connected line segments
+                for i in range(len(points) - 1):
+                    draw.line([points[i], points[i + 1]], fill=line_color, width=line_width)
+        
+        return bg
+    
+    def _generate_geometric_shapes_bg(self, size: Tuple[int, int]) -> Image.Image:
+        """Generate background with geometric shapes that could be mistaken for characters."""
+        bg = Image.new('RGB', size)
+        draw = ImageDraw.Draw(bg)
+        
+        # Base background color
+        base_color = tuple(random.randint(200, 255) for _ in range(3))
+        draw.rectangle([0, 0, size[0], size[1]], fill=base_color)
+        
+        # Add geometric shapes
+        num_shapes = random.randint(15, 30)
+        for _ in range(num_shapes):
+            shape_color = tuple(random.randint(0, 180) for _ in range(3))
+            opacity = random.randint(100, 200)  # Semi-transparent
+            
+            # Character-sized shapes
+            shape_size = random.randint(20, 60)
+            x = random.randint(0, size[0] - shape_size)
+            y = random.randint(0, size[1] - shape_size)
+            
+            # Create overlay for transparency
+            overlay = Image.new('RGBA', size, (0, 0, 0, 0))
+            overlay_draw = ImageDraw.Draw(overlay)
+            
+            shape_type = random.choice(['rectangle', 'ellipse', 'triangle'])
+            
+            if shape_type == 'rectangle':
+                overlay_draw.rectangle(
+                    [x, y, x + shape_size, y + shape_size],
+                    fill=shape_color + (opacity,)
+                )
+            elif shape_type == 'ellipse':
+                overlay_draw.ellipse(
+                    [x, y, x + shape_size, y + shape_size],
+                    fill=shape_color + (opacity,)
+                )
+            else:  # triangle
+                points = [
+                    (x + shape_size // 2, y),
+                    (x, y + shape_size),
+                    (x + shape_size, y + shape_size)
+                ]
+                overlay_draw.polygon(points, fill=shape_color + (opacity,))
+            
+            # Composite overlay onto background
+            bg = Image.alpha_composite(bg.convert('RGBA'), overlay).convert('RGB')
+        
+        return bg
+    
+    def _generate_noise_texture_bg(self, size: Tuple[int, int]) -> Image.Image:
+        """Generate background with noise textures that have high-frequency components."""
+        bg = Image.new('RGB', size)
+        
+        # Base color
+        base_color = random.randint(180, 255)
+        bg_array = np.full((size[1], size[0], 3), base_color, dtype=np.uint8)
+        
+        # Choose noise type
+        noise_type = random.choice(['perlin', 'salt_pepper', 'grid'])
+        
+        if noise_type == 'perlin':
+            # Simple Perlin-like noise using sine waves
+            freq_x = random.uniform(0.01, 0.05)
+            freq_y = random.uniform(0.01, 0.05)
+            
+            for y in range(size[1]):
+                for x in range(size[0]):
+                    noise_val = (
+                        np.sin(x * freq_x) * np.sin(y * freq_y) +
+                        np.sin(x * freq_x * 2.1) * np.sin(y * freq_y * 2.1) * 0.5
+                    )
+                    intensity = int(base_color + noise_val * 50)
+                    intensity = max(0, min(255, intensity))
+                    bg_array[y, x] = [intensity, intensity, intensity]
+        
+        elif noise_type == 'salt_pepper':
+            # Salt and pepper noise
+            noise_density = 0.05
+            for y in range(size[1]):
+                for x in range(size[0]):
+                    if random.random() < noise_density:
+                        # Random black or white pixel
+                        value = 0 if random.random() < 0.5 else 255
+                        bg_array[y, x] = [value, value, value]
+        
+        else:  # grid
+            # Grid pattern
+            grid_size = random.randint(20, 40)
+            line_color = random.randint(0, 150)
+            
+            # Vertical lines
+            for x in range(0, size[0], grid_size):
+                bg_array[:, x:x+2] = line_color
+            
+            # Horizontal lines
+            for y in range(0, size[1], grid_size):
+                bg_array[y:y+2, :] = line_color
+        
+        return Image.fromarray(bg_array)
+    
+    def _generate_pseudo_characters_bg(self, size: Tuple[int, int]) -> Image.Image:
+        """Generate background with pseudo-character symbols."""
+        bg = Image.new('RGB', size)
+        draw = ImageDraw.Draw(bg)
+        
+        # Base background color
+        base_color = tuple(random.randint(200, 255) for _ in range(3))
+        draw.rectangle([0, 0, size[0], size[1]], fill=base_color)
+        
+        # Pseudo-character patterns
+        patterns = [
+            # Cross
+            lambda x, y, s: [((x, y + s//3), (x + s, y + s//3)), 
+                           ((x + s//2, y), (x + s//2, y + s))],
+            # L shape
+            lambda x, y, s: [((x, y), (x, y + s)), 
+                           ((x, y + s), (x + s//2, y + s))],
+            # T shape
+            lambda x, y, s: [((x, y), (x + s, y)), 
+                           ((x + s//2, y), (x + s//2, y + s))],
+            # Angle bracket
+            lambda x, y, s: [((x, y), (x + s//2, y + s//2)), 
+                           ((x + s//2, y + s//2), (x, y + s))],
+            # Square bracket
+            lambda x, y, s: [((x, y), (x, y + s)), 
+                           ((x, y), (x + s//3, y)), 
+                           ((x, y + s), (x + s//3, y + s))],
+        ]
+        
+        # Add pseudo-characters
+        num_symbols = random.randint(10, 25)
+        for _ in range(num_symbols):
+            symbol_color = tuple(random.randint(0, 150) for _ in range(3))
+            symbol_size = random.randint(20, 50)
+            line_width = random.randint(2, 5)
+            
+            # Random position
+            x = random.randint(0, size[0] - symbol_size)
+            y = random.randint(0, size[1] - symbol_size)
+            
+            # Random rotation angle
+            angle = random.uniform(0, 360)
+            
+            # Choose pattern
+            pattern = random.choice(patterns)
+            lines = pattern(0, 0, symbol_size)
+            
+            # Draw pattern with rotation
+            for line in lines:
+                # Rotate line points around center
+                cx, cy = symbol_size // 2, symbol_size // 2
+                rotated_line = []
+                
+                for px, py in line:
+                    # Translate to origin
+                    px -= cx
+                    py -= cy
+                    
+                    # Rotate
+                    angle_rad = np.radians(angle)
+                    new_x = px * np.cos(angle_rad) - py * np.sin(angle_rad)
+                    new_y = px * np.sin(angle_rad) + py * np.cos(angle_rad)
+                    
+                    # Translate back and offset to position
+                    new_x += cx + x
+                    new_y += cy + y
+                    
+                    rotated_line.append((new_x, new_y))
+                
+                draw.line(rotated_line, fill=symbol_color, width=line_width)
+        
+        return bg
     
     def _render_multiline_text(
         self,

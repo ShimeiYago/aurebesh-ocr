@@ -29,7 +29,16 @@ style:
   color:
     text_color_mode: "random"  # random, fixed
     background_mode: "mixed"    # image, synthetic, mixed
-    synthetic_bg_prob: 0.2
+    synthetic_bg_prob: 0.5    # 50% synthetic backgrounds
+    
+    # Synthetic background pattern probabilities (must sum to 1.0)
+    synthetic_patterns:
+      solid_color: 0.2        # 20% of synthetic = 10% total
+      gradient: 0.2           # 20% of synthetic = 10% total
+      random_lines: 0.2       # 20% of synthetic = 10% total
+      geometric_shapes: 0.16  # 16% of synthetic = 8% total
+      noise_texture: 0.14     # 14% of synthetic = 7% total
+      pseudo_characters: 0.1  # 10% of synthetic = 5% total
     
   # Effects
   effects:
