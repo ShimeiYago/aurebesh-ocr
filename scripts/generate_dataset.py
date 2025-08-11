@@ -251,6 +251,92 @@ class AurebeshDatasetGenerator:
             bg = bg.resize(size, Image.Resampling.LANCZOS)
             return bg
     
+    def _render_multiline_text(
+        self,
+        lines: List[str],
+        font_path: Path,
+        font_sizes: List[int],
+        x: int,
+        y: int,
+        text_color: Tuple[int, int, int],
+        draw: ImageDraw.Draw,
+        line_spacing: float = 1.2
+    ) -> List[Dict]:
+        """Render multiple lines of text with individual bboxes."""
+        annotations = []
+        current_y = y
+        effects = self.config['style']['effects']
+        
+        for i, (line_text, font_size) in enumerate(zip(lines, font_sizes)):
+            try:
+                font = ImageFont.truetype(str(font_path), font_size)
+            except:
+                font = ImageFont.load_default()
+            
+            # Get text metrics
+            bbox = draw.textbbox((0, 0), line_text, font=font)
+            text_height = bbox[3] - bbox[1]
+            actual_x_offset = -bbox[0]
+            actual_y_offset = -bbox[1]
+            
+            # Adjust position
+            text_x = x + actual_x_offset
+            text_y = current_y + actual_y_offset
+            
+            # Shadow
+            if random.random() < effects['shadow_prob']:
+                shadow_offset = random.randint(2, 5)
+                shadow_color = tuple(int(c * 0.3) for c in text_color)
+                draw.text((text_x + shadow_offset, text_y + shadow_offset), 
+                        line_text, font=font, fill=shadow_color)
+            
+            # Border
+            if random.random() < effects['border_prob']:
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        if dx != 0 or dy != 0:
+                            draw.text((text_x + dx, text_y + dy), 
+                                    line_text, font=font, fill=(0, 0, 0))
+            
+            # Draw the line
+            draw.text((text_x, text_y), line_text, font=font, fill=text_color)
+            
+            # Get precise bbox for this line
+            line_bbox = draw.textbbox((text_x, text_y), line_text, font=font)
+            
+            # Create annotation for this line
+            annotation = {
+                'text': line_text,
+                'bbox': [line_bbox[0], line_bbox[1], line_bbox[2], line_bbox[3]],
+                'polygon': [
+                    [line_bbox[0], line_bbox[1]],
+                    [line_bbox[2], line_bbox[1]],
+                    [line_bbox[2], line_bbox[3]],
+                    [line_bbox[0], line_bbox[3]]
+                ]
+            }
+            annotations.append(annotation)
+            
+            # Move to next line
+            current_y += int(text_height * line_spacing)
+        
+        return annotations
+    
+    def _generate_text_variant(self) -> Tuple[str, str]:
+        """Generate text and determine variant type."""
+        # Decide variant type based on probabilities
+        variant_config = self.config['style'].get('variants', {})
+        multiline_prob = variant_config.get('multiline_prob', 0.3)
+        size_contrast_prob = variant_config.get('size_contrast_prob', 0.2)
+        
+        rand = random.random()
+        if rand < multiline_prob:
+            return self._generate_text(), 'multiline'
+        elif rand < multiline_prob + size_contrast_prob:
+            return self._generate_text(), 'size_contrast'
+        else:
+            return self._generate_text(), 'normal'
+    
     def _render_text_on_image(
         self, 
         text: str, 
@@ -290,11 +376,12 @@ class AurebeshDatasetGenerator:
         spatial_grid = self._create_spatial_grid(image_size, cell_size=grid_cell_size)
         
         for block_idx in range(num_text_blocks):
-            # Generate text for this block (or use provided text for first block)
+            # Generate text and variant type for this block
             if block_idx == 0:
                 block_text = text
+                variant_type = self._generate_text_variant()[1]
             else:
-                block_text = self._generate_text()
+                block_text, variant_type = self._generate_text_variant()
             
             # Sample font for this block (can vary per block)
             if block_idx > 0:
@@ -358,10 +445,73 @@ class AurebeshDatasetGenerator:
             # Text color for this block
             text_color = tuple(random.randint(0, 255) for _ in range(3))
             
+            # Handle different text variants
+            if variant_type == 'multiline':
+                # Split text into 2-3 lines
+                words = block_text.split()
+                num_lines = random.randint(2, 3)
+                
+                # Distribute words across lines
+                words_per_line = max(1, len(words) // num_lines)
+                lines = []
+                for i in range(num_lines):
+                    start_idx = i * words_per_line
+                    if i == num_lines - 1:
+                        # Last line gets all remaining words
+                        line_words = words[start_idx:]
+                    else:
+                        line_words = words[start_idx:start_idx + words_per_line]
+                    if line_words:
+                        lines.append(' '.join(line_words))
+                
+                # All lines use same font size
+                font_sizes = [font_size] * len(lines)
+                
+            elif variant_type == 'size_contrast':
+                # Two lines with 2x size difference
+                words = block_text.split()
+                if len(words) >= 2:
+                    # Split into two lines
+                    mid = len(words) // 2
+                    lines = [' '.join(words[:mid]), ' '.join(words[mid:])]
+                    # First line is 2x larger
+                    font_sizes = [font_size, max(15, font_size // 2)]
+                else:
+                    # Single word - duplicate it
+                    lines = [words[0], words[0] if words else block_text]
+                    font_sizes = [font_size, max(15, font_size // 2)]
+            else:
+                # Normal single line
+                lines = [block_text]
+                font_sizes = [font_size]
+            
             # Decide on rotation first to calculate accurate dimensions
             effects = self.config['style']['effects']
-            will_rotate = 'rotation_prob' in effects and random.random() < effects['rotation_prob']
-            if will_rotate:
+            will_rotate = 'rotation_prob' in effects and random.random() < effects['rotation_prob'] and variant_type == 'normal'
+            # Calculate dimensions for all lines
+            if variant_type in ['multiline', 'size_contrast']:
+                # Calculate total height and max width for multi-line text
+                total_height = 0
+                max_width = 0
+                line_spacing = 1.2
+                
+                for line_text, line_font_size in zip(lines, font_sizes):
+                    try:
+                        line_font = ImageFont.truetype(str(font_path), line_font_size)
+                    except:
+                        line_font = ImageFont.load_default()
+                    
+                    bbox = draw.textbbox((0, 0), line_text, font=line_font)
+                    line_width = bbox[2] - bbox[0]
+                    line_height = bbox[3] - bbox[1]
+                    
+                    max_width = max(max_width, line_width)
+                    total_height += line_height * line_spacing
+                
+                placement_width = max_width
+                placement_height = total_height
+                angle = 0  # No rotation for multi-line text
+            elif will_rotate:
                 rotation_range = effects.get('rotation_range', [-15, 15])
                 angle = random.uniform(rotation_range[0], rotation_range[1])
                 # Use rotated dimensions for placement with extra safety margin
@@ -377,7 +527,6 @@ class AurebeshDatasetGenerator:
             
             # Try to find non-overlapping position with accurate dimensions
             max_attempts = 100
-            placed = False
             
             for attempt in range(max_attempts):
                 # Calculate safe placement boundaries with accurate dimensions
@@ -503,61 +652,81 @@ class AurebeshDatasetGenerator:
                                     [actual_x1, actual_y2]
                                 ]
                             }
+                            annotations.append(annotation)
                         else:
                             # Skip if no visible pixels
                             continue
                     else:
-                        # No rotation - improved non-rotated text placement
-                        # Calculate precise text position with baseline considerations
-                        # Get accurate text metrics
-                        bbox = draw.textbbox((0, 0), block_text, font=font)
-                        actual_x_offset = -bbox[0]  # Left bearing
-                        actual_y_offset = -bbox[1]  # Top bearing
-                        
-                        # Adjust position to account for font metrics
-                        text_x = x + actual_x_offset
-                        text_y = y + actual_y_offset
-                        
-                        # Final boundary check - ensure text won't exceed image bounds
-                        final_bbox_check = draw.textbbox((text_x, text_y), block_text, font=font)
-                        if (final_bbox_check[0] < 0 or final_bbox_check[1] < 0 or
-                            final_bbox_check[2] > image_size[0] or final_bbox_check[3] > image_size[1]):
-                            continue  # Skip this text block
-                        
-                        # Shadow
-                        if random.random() < effects['shadow_prob']:
-                            shadow_offset = random.randint(2, 5)
-                            shadow_color = tuple(int(c * 0.3) for c in text_color)
-                            draw.text((text_x + shadow_offset, text_y + shadow_offset), 
-                                    block_text, font=font, fill=shadow_color)
-                        
-                        # Border
-                        if random.random() < effects['border_prob']:
-                            for dx in [-1, 0, 1]:
-                                for dy in [-1, 0, 1]:
-                                    if dx != 0 or dy != 0:
-                                        draw.text((text_x + dx, text_y + dy), 
-                                                block_text, font=font, fill=(0, 0, 0))
-                        
-                        # Main text
-                        draw.text((text_x, text_y), block_text, font=font, fill=text_color)
-                        
-                        # Create precise bounding box using actual text metrics
-                        final_bbox = draw.textbbox((text_x, text_y), block_text, font=font)
-                        
-                        # Create annotation with precise coordinates (no clamping needed)
-                        annotation = {
-                            'text': block_text,
-                            'bbox': [final_bbox[0], final_bbox[1], final_bbox[2], final_bbox[3]],
-                            'polygon': [
-                                [final_bbox[0], final_bbox[1]],
-                                [final_bbox[2], final_bbox[1]],
-                                [final_bbox[2], final_bbox[3]],
-                                [final_bbox[0], final_bbox[3]]
-                            ]
-                        }
-                    
-                    annotations.append(annotation)
+                        # No rotation - handle single or multi-line text
+                        if variant_type in ['multiline', 'size_contrast']:
+                            # Use the multiline rendering function
+                            line_annotations = self._render_multiline_text(
+                                lines, font_path, font_sizes, x, y, text_color, draw
+                            )
+                            
+                            # Filter out annotations that exceed bounds
+                            valid_annotations = []
+                            for ann in line_annotations:
+                                bbox = ann['bbox']
+                                if not (bbox[0] < 0 or bbox[1] < 0 or
+                                        bbox[2] > image_size[0] or bbox[3] > image_size[1]):
+                                    valid_annotations.append(ann)
+                            
+                            # Only add if we have at least one valid annotation
+                            if valid_annotations:
+                                annotations.extend(valid_annotations)
+                        else:
+                            # Single line text - original logic
+                            # Calculate precise text position with baseline considerations
+                            # Get accurate text metrics
+                            bbox = draw.textbbox((0, 0), block_text, font=font)
+                            actual_x_offset = -bbox[0]  # Left bearing
+                            actual_y_offset = -bbox[1]  # Top bearing
+                            
+                            # Adjust position to account for font metrics
+                            text_x = x + actual_x_offset
+                            text_y = y + actual_y_offset
+                            
+                            # Final boundary check - ensure text won't exceed image bounds
+                            final_bbox_check = draw.textbbox((text_x, text_y), block_text, font=font)
+                            if (final_bbox_check[0] < 0 or final_bbox_check[1] < 0 or
+                                final_bbox_check[2] > image_size[0] or final_bbox_check[3] > image_size[1]):
+                                continue  # Skip this text block
+                            
+                            # Shadow
+                            if random.random() < effects['shadow_prob']:
+                                shadow_offset = random.randint(2, 5)
+                                shadow_color = tuple(int(c * 0.3) for c in text_color)
+                                draw.text((text_x + shadow_offset, text_y + shadow_offset), 
+                                        block_text, font=font, fill=shadow_color)
+                            
+                            # Border
+                            if random.random() < effects['border_prob']:
+                                for dx in [-1, 0, 1]:
+                                    for dy in [-1, 0, 1]:
+                                        if dx != 0 or dy != 0:
+                                            draw.text((text_x + dx, text_y + dy), 
+                                                    block_text, font=font, fill=(0, 0, 0))
+                            
+                            # Main text
+                            draw.text((text_x, text_y), block_text, font=font, fill=text_color)
+                            
+                            # Create precise bounding box using actual text metrics
+                            final_bbox = draw.textbbox((text_x, text_y), block_text, font=font)
+                            
+                            # Create annotation with precise coordinates (no clamping needed)
+                            annotation = {
+                                'text': block_text,
+                                'bbox': [final_bbox[0], final_bbox[1], final_bbox[2], final_bbox[3]],
+                                'polygon': [
+                                    [final_bbox[0], final_bbox[1]],
+                                    [final_bbox[2], final_bbox[1]],
+                                    [final_bbox[2], final_bbox[3]],
+                                    [final_bbox[0], final_bbox[3]]
+                                ]
+                            }
+                            
+                            annotations.append(annotation)
                     break
         
         return bg, annotations
