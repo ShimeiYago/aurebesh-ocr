@@ -113,7 +113,7 @@ You can customize the behavior of the OCR pipeline by editing the configuration 
 ### `dataset.yaml`
 - **Purpose**: Controls synthetic dataset generation parameters
 - **Key settings**:
-  - `style.font`: Font sampling probabilities (core: 60%, variant: 30%, fancy: 10%)
+  - `style.font`: Font sampling probabilities (core: 60%, variant: 40%)
   - `style.text`: Text generation parameters (word count, length ranges)
   - `style.color`: Text and background color modes
   - `effects`: Visual effects like shadow, border, rotation

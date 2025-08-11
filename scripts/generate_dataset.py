@@ -75,9 +75,7 @@ class AurebeshDatasetGenerator:
             'core': list((self.font_dir / 'core').glob('*.ttf')) + 
                    list((self.font_dir / 'core').glob('*.otf')),
             'variant': list((self.font_dir / 'variant').glob('*.ttf')) + 
-                      list((self.font_dir / 'variant').glob('*.otf')),
-            'fancy': list((self.font_dir / 'fancy').glob('*.ttf')) + 
-                    list((self.font_dir / 'fancy').glob('*.otf'))
+                      list((self.font_dir / 'variant').glob('*.otf'))
         }
         return fonts
     
@@ -165,8 +163,8 @@ class AurebeshDatasetGenerator:
         """Sample font based on configured probabilities."""
         probs = self.config['style']['font']
         category = random.choices(
-            ['core', 'variant', 'fancy'],
-            weights=[probs['core_prob'], probs['variant_prob'], probs['fancy_prob']]
+            ['core', 'variant'],
+            weights=[probs['core_prob'], probs['variant_prob']]
         )[0]
         return random.choice(self.fonts[category])
     
