@@ -69,6 +69,9 @@ class AurebeshDatasetGenerator:
         # Setup augmentations
         self.augmentations = self._setup_augmentations()
         
+        # Probability of mixing alphabets with aurebesh
+        self.alphabet_mix_prob = 0.1  # 10% chance to include alphabets
+        
     def _load_fonts(self) -> Dict[str, List[Path]]:
         """Load fonts from assets/fonts directory."""
         fonts = {
@@ -190,6 +193,47 @@ class AurebeshDatasetGenerator:
                 words.append(word)
             
             return ' '.join(words)
+    
+    def _generate_text_with_alphabet_mix(self) -> Tuple[str, List[bool]]:
+        """Generate text with mixed Aurebesh and alphabet characters.
+        Returns:
+            tuple: (text, is_alphabet_list) where is_alphabet_list indicates which words are alphabets
+        """
+        text_config = self.config['style']['text']
+        num_words = random.randint(text_config['min_words'], text_config['max_words'])
+        words = []
+        is_alphabet_list = []
+        
+        for _ in range(num_words):
+            # Decide if this word should be alphabet
+            if random.random() < self.alphabet_mix_prob:
+                # Generate alphabet word
+                word_len = random.randint(
+                    text_config['min_word_length'], 
+                    text_config['max_word_length']
+                )
+                # Use standard English alphabet
+                alphabet_chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+                word = ''.join(random.choices(alphabet_chars, k=word_len))
+                words.append(word)
+                is_alphabet_list.append(True)
+            else:
+                # Generate Aurebesh word
+                if self.word_list and random.random() < (1 - DEFAULT_RANDOM_TEXT_RATIO):
+                    # Use vocabulary
+                    word = random.choice(self.word_list)
+                else:
+                    # Random Aurebesh characters
+                    word_len = random.randint(
+                        text_config['min_word_length'], 
+                        text_config['max_word_length']
+                    )
+                    available_chars = [c for c in self.charset if c.isalpha()]
+                    word = ''.join(random.choices(available_chars, k=word_len))
+                words.append(word)
+                is_alphabet_list.append(False)
+        
+        return ' '.join(words), is_alphabet_list
     
     def _create_spatial_grid(self, image_size: Tuple[int, int], cell_size: int = 100) -> List[List[bool]]:
         """Create a spatial grid to track occupied regions for efficient placement."""
@@ -322,6 +366,88 @@ class AurebeshDatasetGenerator:
         
         return annotations
     
+    def _render_mixed_text(
+        self,
+        text: str,
+        is_alphabet_list: List[bool],
+        font_path: Path,
+        font_size: int,
+        x: int,
+        y: int,
+        text_color: Tuple[int, int, int],
+        draw: ImageDraw.Draw
+    ) -> List[Dict]:
+        """Render text with mixed Aurebesh and alphabet characters.
+        Only Aurebesh words get bounding boxes."""
+        words = text.split()
+        annotations = []
+        current_x = x
+        effects = self.config['style']['effects']
+        
+        for word, is_alphabet in zip(words, is_alphabet_list):
+            # Choose font based on character type
+            if is_alphabet:
+                # Use default system font for alphabets
+                try:
+                    # Try to use a clean sans-serif font
+                    font = ImageFont.truetype("Arial.ttf", font_size)
+                except:
+                    font = ImageFont.load_default()
+            else:
+                # Use Aurebesh font
+                try:
+                    font = ImageFont.truetype(str(font_path), font_size)
+                except:
+                    font = ImageFont.load_default()
+            
+            # Get text metrics
+            bbox = draw.textbbox((0, 0), word, font=font)
+            text_width = bbox[2] - bbox[0]
+            actual_x_offset = -bbox[0]
+            actual_y_offset = -bbox[1]
+            
+            # Adjust position
+            word_x = current_x + actual_x_offset
+            word_y = y + actual_y_offset
+            
+            # Apply effects (shadow/border) for all text
+            if random.random() < effects['shadow_prob']:
+                shadow_offset = random.randint(2, 5)
+                shadow_color = tuple(int(c * 0.3) for c in text_color)
+                draw.text((word_x + shadow_offset, word_y + shadow_offset), 
+                        word, font=font, fill=shadow_color)
+            
+            if random.random() < effects['border_prob']:
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        if dx != 0 or dy != 0:
+                            draw.text((word_x + dx, word_y + dy), 
+                                    word, font=font, fill=(0, 0, 0))
+            
+            # Draw the word
+            draw.text((word_x, word_y), word, font=font, fill=text_color)
+            
+            # Only create annotation for Aurebesh words
+            if not is_alphabet:
+                word_bbox = draw.textbbox((word_x, word_y), word, font=font)
+                annotation = {
+                    'text': word,
+                    'bbox': [word_bbox[0], word_bbox[1], word_bbox[2], word_bbox[3]],
+                    'polygon': [
+                        [word_bbox[0], word_bbox[1]],
+                        [word_bbox[2], word_bbox[1]],
+                        [word_bbox[2], word_bbox[3]],
+                        [word_bbox[0], word_bbox[3]]
+                    ]
+                }
+                annotations.append(annotation)
+            
+            # Move to next word position (add space)
+            space_width = draw.textbbox((0, 0), ' ', font=font)[2]
+            current_x += text_width + space_width
+        
+        return annotations
+    
     def _generate_text_variant(self) -> Tuple[str, str]:
         """Generate text and determine variant type."""
         # Decide variant type based on probabilities
@@ -376,12 +502,24 @@ class AurebeshDatasetGenerator:
         spatial_grid = self._create_spatial_grid(image_size, cell_size=grid_cell_size)
         
         for block_idx in range(num_text_blocks):
+            # Decide if this block should have mixed alphabet
+            use_alphabet_mix = random.random() < self.alphabet_mix_prob
+            is_alphabet_list = []
+            
             # Generate text and variant type for this block
             if block_idx == 0:
-                block_text = text
-                variant_type = self._generate_text_variant()[1]
+                if use_alphabet_mix:
+                    block_text, is_alphabet_list = self._generate_text_with_alphabet_mix()
+                    variant_type = 'mixed'
+                else:
+                    block_text = text
+                    variant_type = self._generate_text_variant()[1]
             else:
-                block_text, variant_type = self._generate_text_variant()
+                if use_alphabet_mix:
+                    block_text, is_alphabet_list = self._generate_text_with_alphabet_mix()
+                    variant_type = 'mixed'
+                else:
+                    block_text, variant_type = self._generate_text_variant()
             
             # Sample font for this block (can vary per block)
             if block_idx > 0:
@@ -415,9 +553,37 @@ class AurebeshDatasetGenerator:
                     font = ImageFont.load_default()
                 
                 # Get accurate text metrics using textbbox
-                bbox = draw.textbbox((0, 0), block_text, font=font)
-                text_width = bbox[2] - bbox[0]
-                text_height = bbox[3] - bbox[1]
+                if variant_type == 'mixed':
+                    # For mixed text, calculate width for each word separately
+                    words = block_text.split()
+                    total_width = 0
+                    max_height = 0
+                    
+                    for word, is_alphabet in zip(words, is_alphabet_list):
+                        if is_alphabet:
+                            # Use system font for alphabet
+                            try:
+                                word_font = ImageFont.truetype("Arial.ttf", font_size)
+                            except:
+                                word_font = ImageFont.load_default()
+                        else:
+                            word_font = font
+                        
+                        word_bbox = draw.textbbox((0, 0), word, font=word_font)
+                        word_width = word_bbox[2] - word_bbox[0]
+                        word_height = word_bbox[3] - word_bbox[1]
+                        total_width += word_width
+                        max_height = max(max_height, word_height)
+                    
+                    # Add space between words
+                    space_bbox = draw.textbbox((0, 0), ' ', font=font)
+                    space_width = space_bbox[2]
+                    text_width = total_width + space_width * (len(words) - 1)
+                    text_height = max_height
+                else:
+                    bbox = draw.textbbox((0, 0), block_text, font=font)
+                    text_width = bbox[2] - bbox[0]
+                    text_height = bbox[3] - bbox[1]
                 
                 # Calculate maximum dimensions considering potential rotation
                 import math
@@ -658,7 +824,25 @@ class AurebeshDatasetGenerator:
                             continue
                     else:
                         # No rotation - handle single or multi-line text
-                        if variant_type in ['multiline', 'size_contrast']:
+                        if variant_type == 'mixed':
+                            # Use the mixed text rendering function
+                            mixed_annotations = self._render_mixed_text(
+                                block_text, is_alphabet_list, font_path, font_size, 
+                                x, y, text_color, draw
+                            )
+                            
+                            # Filter out annotations that exceed bounds
+                            valid_annotations = []
+                            for ann in mixed_annotations:
+                                bbox = ann['bbox']
+                                if not (bbox[0] < 0 or bbox[1] < 0 or
+                                        bbox[2] > image_size[0] or bbox[3] > image_size[1]):
+                                    valid_annotations.append(ann)
+                            
+                            # Only add if we have at least one valid annotation
+                            if valid_annotations:
+                                annotations.extend(valid_annotations)
+                        elif variant_type in ['multiline', 'size_contrast']:
                             # Use the multiline rendering function
                             line_annotations = self._render_multiline_text(
                                 lines, font_path, font_sizes, x, y, text_color, draw
