@@ -19,16 +19,25 @@ from doctr.models.detection import db_mobilenet_v3_large
 from torchvision import transforms
 import cv2
 
+# Install shapely if not available: pip install shapely
+try:
+    from shapely.geometry import Polygon
+    SHAPELY_AVAILABLE = True
+except ImportError:
+    SHAPELY_AVAILABLE = False
+    print("Warning: shapely not available. Polygon shrinking will be disabled.")
+
 from utils import setup_logger, ensure_dir, load_config, get_run_id
 
 
 class AurebeshDetectionDataset(Dataset):
     """Dataset for Aurebesh text detection."""
     
-    def __init__(self, data_dir: Path, split: str = 'train', transform=None):
+    def __init__(self, data_dir: Path, split: str = 'train', transform=None, shrink_ratio: float = 0.6):
         self.data_dir = Path(data_dir) / split
         self.images_dir = self.data_dir / 'images'
         self.transform = transform
+        self.shrink_ratio = shrink_ratio  # For better text instance separation
         
         # Load annotations
         with open(self.data_dir / 'annotations.json', 'r') as f:
@@ -45,6 +54,97 @@ class AurebeshDetectionDataset(Dataset):
         # Filter images that have annotations
         self.images = [img for img in self.coco_data['images'] 
                       if img['id'] in self.image_to_anns]
+    
+    def _shrink_polygon(self, polygon: np.ndarray, shrink_ratio: float) -> np.ndarray:
+        """Shrink polygon to create better text instance separation."""
+        if not SHAPELY_AVAILABLE:
+            # Fallback: simple erosion using cv2
+            return self._shrink_polygon_cv2(polygon, shrink_ratio)
+            
+        try:
+            from shapely.geometry import Polygon
+            from shapely.ops import unary_union
+            
+            # Create shapely polygon
+            poly = Polygon(polygon)
+            if not poly.is_valid:
+                # Try to fix invalid polygon
+                poly = poly.buffer(0)
+            
+            # Calculate shrink distance based on polygon area
+            area = poly.area
+            shrink_distance = shrink_ratio * np.sqrt(area) / 2
+            
+            # Shrink polygon (negative buffer)
+            shrunken = poly.buffer(-shrink_distance)
+            
+            if shrunken.is_empty or shrunken.area < 1:
+                # If shrinking makes polygon too small, return original with minimal shrink
+                shrunken = poly.buffer(-1)
+                
+            if shrunken.is_empty:
+                return polygon  # Return original if still empty
+            
+            # Extract coordinates
+            if hasattr(shrunken, 'exterior'):
+                coords = np.array(shrunken.exterior.coords[:-1])  # Remove duplicate last point
+            else:
+                return polygon  # Return original if shrinking failed
+                
+            return coords
+            
+        except Exception:
+            # If any error occurs, return original polygon
+            return polygon
+    
+    def _shrink_polygon_cv2(self, polygon: np.ndarray, shrink_ratio: float) -> np.ndarray:
+        """Fallback polygon shrinking using OpenCV erosion."""
+        try:
+            # Create a mask from polygon
+            bbox = cv2.boundingRect(polygon.astype(np.int32))
+            x, y, w, h = bbox
+            
+            # Create mask slightly larger than bounding box
+            mask_size = (h + 20, w + 20)
+            mask = np.zeros(mask_size, dtype=np.uint8)
+            
+            # Translate polygon to mask coordinate system
+            translated_polygon = polygon.copy()
+            translated_polygon[:, 0] -= (x - 10)
+            translated_polygon[:, 1] -= (y - 10)
+            
+            # Fill polygon in mask
+            cv2.fillPoly(mask, [translated_polygon.astype(np.int32)], 255)
+            
+            # Calculate erosion kernel size based on polygon area
+            area = cv2.contourArea(polygon.astype(np.int32))
+            kernel_size = max(1, int(shrink_ratio * np.sqrt(area) / 4))
+            
+            # Erode mask
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+            eroded_mask = cv2.erode(mask, kernel, iterations=1)
+            
+            # Find contours in eroded mask
+            contours, _ = cv2.findContours(eroded_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if len(contours) == 0:
+                return polygon  # Return original if erosion removed everything
+            
+            # Get largest contour
+            largest_contour = max(contours, key=cv2.contourArea)
+            
+            # Convert back to original coordinate system
+            result_polygon = largest_contour.squeeze()
+            if len(result_polygon.shape) == 1:
+                return polygon  # Return original if contour is invalid
+                
+            result_polygon[:, 0] += (x - 10)
+            result_polygon[:, 1] += (y - 10)
+            
+            return result_polygon.astype(np.float32)
+            
+        except Exception:
+            return polygon
     
     def __len__(self):
         return len(self.images)
@@ -71,8 +171,12 @@ class AurebeshDetectionDataset(Dataset):
             segmentation = ann['segmentation'][0]  # First (and only) polygon
             points = np.array(segmentation).reshape(-1, 2).astype(np.int32)
             
-            # Fill polygon
-            cv2.fillPoly(seg_map, [points], 1.0)
+            # Apply shrink to improve text instance separation
+            shrunken_points = self._shrink_polygon(points.astype(np.float32), self.shrink_ratio)
+            shrunken_points = shrunken_points.astype(np.int32)
+            
+            # Fill polygon with shrunken version
+            cv2.fillPoly(seg_map, [shrunken_points], 1.0)
         
         # Apply transforms
         if self.transform:
@@ -180,12 +284,16 @@ class DetectorTrainer:
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
         
+        # Get shrink ratio from config (default 0.6 for better separation)
+        shrink_ratio = self.config.get('gt_generation', {}).get('shrink_ratio', 0.6)
+        self.logger.info(f"Using shrink_ratio: {shrink_ratio} for GT generation")
+        
         # Datasets
         train_dataset = AurebeshDetectionDataset(
-            self.data_dir, split='train', transform=transform
+            self.data_dir, split='train', transform=transform, shrink_ratio=shrink_ratio
         )
         val_dataset = AurebeshDetectionDataset(
-            self.data_dir, split='val', transform=transform
+            self.data_dir, split='val', transform=transform, shrink_ratio=shrink_ratio
         )
         
         # Custom collate function to handle variable number of annotations
