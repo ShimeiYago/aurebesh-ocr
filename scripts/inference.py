@@ -19,7 +19,7 @@ from doctr.models.detection import db_mobilenet_v3_large
 from doctr.models.recognition import crnn_mobilenet_v3_small
 from torchvision import transforms
 
-from utils import get_charset
+from utils import get_charset, load_config
 
 
 class AurebeshOCR:
@@ -27,17 +27,28 @@ class AurebeshOCR:
         self,
         det_checkpoint: Path,
         rec_checkpoint: Path,
+        config_path: Optional[Path] = None,
         device: str = 'mps'
     ):
         self.device = torch.device(device if torch.backends.mps.is_available() else 'cpu')
         
+        # Load configuration
+        if config_path is None:
+            config_path = Path(__file__).parent.parent / "configs" / "inference.yaml"
+        self.config = load_config(config_path)
+        
+        print(f"Loaded inference config from: {config_path}")
+        print(f"Detection parameters: {self.config['detection']}")
+        print(f"Input parameters: {self.config['input']}")
+        
         # Load models
         self.detector, self.recognizer = self._load_models(det_checkpoint, rec_checkpoint)
         
-        # Setup transforms
+        # Setup transforms using config
+        input_size = self.config['input']['size']
         self.det_transform = transforms.Compose([
             transforms.ToPILImage(),
-            transforms.Resize((1024, 1024)),
+            transforms.Resize((input_size, input_size)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
@@ -98,7 +109,10 @@ class AurebeshOCR:
         return detector, recognizer
     
     def detect_text(self, image: np.ndarray) -> List[Dict]:
-        """Run text detection on image."""
+        """Run text detection on image using config parameters."""
+        # Get detection config
+        det_config = self.config['detection']
+        
         # Transform image
         img_tensor = self.det_transform(image).unsqueeze(0).to(self.device)
         
@@ -119,8 +133,9 @@ class AurebeshOCR:
         else:
             raise ValueError(f"Unexpected detector output type: {type(pred_maps)}")
         
-        # Threshold and find contours
-        binary_map = (pred_map > 0.5).astype(np.uint8)
+        # Apply binarization threshold from config
+        binarize_threshold = det_config['binarize_threshold']
+        binary_map = (pred_map > binarize_threshold).astype(np.uint8)
         contours, _ = cv2.findContours(binary_map, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         detections = []
@@ -128,8 +143,17 @@ class AurebeshOCR:
             # Get bounding box
             x, y, w, h = cv2.boundingRect(contour)
             
-            # Filter small boxes
-            if w * h < 100:
+            # Filter by minimum box size from config
+            min_size = det_config['min_size']
+            if w * h < min_size:
+                continue
+            
+            # Calculate confidence score
+            score = float(pred_map[y:y+h, x:x+w].mean())
+            
+            # Apply box threshold from config
+            box_thresh = det_config['box_thresh']
+            if score < box_thresh:
                 continue
             
             # Scale coordinates back to original image size
@@ -145,8 +169,19 @@ class AurebeshOCR:
             
             detections.append({
                 'bbox': bbox,
-                'score': float(pred_map[y:y+h, x:x+w].mean())
+                'score': score
             })
+        
+        # Sort by score (confidence) in descending order
+        detections.sort(key=lambda d: d['score'], reverse=True)
+        
+        # Limit maximum number of candidates from config
+        max_candidates = det_config['max_candidates']
+        detections = detections[:max_candidates]
+        
+        # Apply final confidence threshold
+        conf_threshold = det_config['conf_threshold']
+        detections = [d for d in detections if d['score'] >= conf_threshold]
         
         # Sort by x-coordinate for reading order
         detections.sort(key=lambda d: d['bbox'][0])
@@ -260,6 +295,7 @@ def main():
     parser.add_argument("--img_path", type=Path, required=True, help="Path to input image or directory containing images")
     parser.add_argument("--det_ckpt", type=Path, default="outputs/weights/det/best.pt", help="Detector checkpoint path")
     parser.add_argument("--rec_ckpt", type=Path, default="outputs/weights/rec/best.pt", help="Recognizer checkpoint path")
+    parser.add_argument("--config", type=Path, default="configs/inference.yaml", help="Inference config path")
     parser.add_argument("--output_dir", type=Path, help="Output directory (optional)")
     parser.add_argument("--device", type=str, default="mps", help="Device to use")
     parser.add_argument("--save_json", action="store_true", help="Save results as JSON")
@@ -267,7 +303,7 @@ def main():
     
     args = parser.parse_args()
     
-    # Resolve checkpoint paths relative to the project root
+    # Resolve paths relative to the project root
     script_dir = Path(__file__).parent
     project_root = script_dir.parent
     
@@ -276,17 +312,22 @@ def main():
         args.det_ckpt = project_root / args.det_ckpt
     if not args.rec_ckpt.is_absolute():
         args.rec_ckpt = project_root / args.rec_ckpt
+    if not args.config.is_absolute():
+        args.config = project_root / args.config
     
-    # Check if checkpoint files exist
+    # Check if files exist
     if not args.det_ckpt.exists():
         raise FileNotFoundError(f"Detection checkpoint not found: {args.det_ckpt}")
     if not args.rec_ckpt.exists():
         raise FileNotFoundError(f"Recognition checkpoint not found: {args.rec_ckpt}")
+    if not args.config.exists():
+        raise FileNotFoundError(f"Config file not found: {args.config}")
     
-    # Initialize OCR
+    # Initialize OCR with config
     ocr = AurebeshOCR(
         det_checkpoint=args.det_ckpt,
         rec_checkpoint=args.rec_ckpt,
+        config_path=args.config,
         device=args.device
     )
     
