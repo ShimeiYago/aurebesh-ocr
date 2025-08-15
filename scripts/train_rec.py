@@ -95,7 +95,8 @@ class RecognizerTrainer:
         data_dir: Path,
         output_dir: Path,
         device: str = 'mps',
-        resume_from: Optional[Path] = None
+        resume_from: Optional[Path] = None,
+        pretrained_from: Optional[Path] = None
     ):
         self.config = load_config(config_path)
         self.data_dir = Path(data_dir)
@@ -134,8 +135,13 @@ class RecognizerTrainer:
         self.start_epoch = 0
         self.best_metric = float('inf')  # Lower CER is better
         
-        if resume_from:
+        # Load checkpoint or pretrained weights
+        if resume_from and pretrained_from:
+            raise ValueError("Cannot specify both --resume and --pretrained options")
+        elif resume_from:
             self._load_checkpoint(resume_from)
+        elif pretrained_from:
+            self._load_pretrained_weights(pretrained_from)
     
     def _setup_model(self) -> nn.Module:
         """Setup CRNN model with MobileNetV3 backbone."""
@@ -522,6 +528,25 @@ class RecognizerTrainer:
         
         self.logger.info(f"Resumed from epoch {checkpoint['epoch']} with CER {checkpoint['metric']:.4f}")
     
+    def _load_pretrained_weights(self, checkpoint_path: Path):
+        """Load only model weights from checkpoint (for fine-tuning)."""
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        
+        # Load only the model weights, not optimizer/scheduler state
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Keep default training state (epoch=0, fresh optimizer/scheduler)
+        # self.start_epoch remains 0
+        # self.best_metric remains float('inf')
+        # optimizer and scheduler keep their initial state
+        
+        self.logger.info(f"Loaded pretrained weights from checkpoint (epoch {checkpoint['epoch']})")
+        self.logger.info("Starting fresh training from epoch 0 with initial learning rate")
+        
+        # Log the fresh learning rate
+        initial_lr = self.optimizer.param_groups[0]['lr']
+        self.logger.info(f"Initial learning rate: {initial_lr:.2e}")
+    
     def train(self):
         """Main training loop."""
         self.logger.info(f"Starting training for {self.config['epochs']} epochs")
@@ -559,7 +584,8 @@ def main():
     parser.add_argument("--data_dir", type=Path, default="data/synth", help="Dataset directory")
     parser.add_argument("--output_dir", type=Path, default="outputs", help="Output directory")
     parser.add_argument("--device", type=str, default="mps", help="Device to use")
-    parser.add_argument("--resume", type=Path, help="Resume from checkpoint")
+    parser.add_argument("--resume", type=Path, help="Resume from checkpoint (includes optimizer/scheduler state)")
+    parser.add_argument("--pretrained", type=Path, help="Load pretrained weights only (fresh optimizer/scheduler)")
     parser.add_argument("--epochs", type=int, help="Override number of epochs")
     
     args = parser.parse_args()
@@ -577,7 +603,8 @@ def main():
         data_dir=args.data_dir,
         output_dir=args.output_dir,
         device=args.device,
-        resume_from=args.resume
+        resume_from=args.resume,
+        pretrained_from=args.pretrained
     )
     
     # Override config after initialization
