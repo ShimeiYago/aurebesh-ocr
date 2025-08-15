@@ -458,6 +458,7 @@ class DetectorTrainer:
     def _save_checkpoint(self, epoch: int, metric: float, is_best: bool = False):
         """Save model checkpoint."""
         # Save the actual DBNet model state, not the wrapper
+        # This ensures consistency with loading procedure
         model_state = self.model.dbnet.state_dict() if hasattr(self.model, 'dbnet') else self.model.state_dict()
         
         checkpoint = {
@@ -489,7 +490,12 @@ class DetectorTrainer:
         """Load model checkpoint."""
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
         
-        self.model.load_state_dict(checkpoint['model_state_dict'])
+        # Load the model state dict to the inner dbnet model
+        if hasattr(self.model, 'dbnet'):
+            self.model.dbnet.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         self.start_epoch = checkpoint['epoch'] + 1
@@ -504,12 +510,18 @@ class DetectorTrainer:
         # Warmup
         warmup_epochs = self.config['scheduler'].get('warmup_epochs', 0)
         
+        # Log current learning rate if resuming
+        if self.start_epoch > 0:
+            current_lr = self.optimizer.param_groups[0]['lr']
+            self.logger.info(f"Resuming with learning rate: {current_lr:.2e}")
+        
         for epoch in range(self.start_epoch, self.config['epochs']):
-            # Warmup learning rate
+            # Warmup learning rate (only if we're still in warmup period)
             if epoch < warmup_epochs:
                 warmup_lr = self.config['optimizer']['lr'] * (epoch + 1) / warmup_epochs
                 for param_group in self.optimizer.param_groups:
                     param_group['lr'] = warmup_lr
+                self.logger.info(f"Warmup epoch {epoch}: lr={warmup_lr:.2e}")
             
             # Train
             train_loss = self._train_epoch(epoch)
@@ -519,7 +531,11 @@ class DetectorTrainer:
             
             # Update scheduler (after warmup)
             if epoch >= warmup_epochs:
+                old_lr = self.optimizer.param_groups[0]['lr']
                 self.scheduler.step()
+                new_lr = self.optimizer.param_groups[0]['lr']
+                if epoch == self.start_epoch or old_lr != new_lr:  # Log LR changes
+                    self.logger.info(f"Scheduler step: lr {old_lr:.2e} -> {new_lr:.2e}")
             
             # Save checkpoint
             metric = 1 - val_loss  # Convert loss to metric (higher is better)
