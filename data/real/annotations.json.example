@@ -1,0 +1,486 @@
+{
+  "images": [
+    {
+      "id": 1,
+      "file_name": "example1.png",
+      "width": 1024,
+      "height": 1024
+    },
+    {
+      "id": 2,
+      "file_name": "example2.png",
+      "width": 1024,
+      "height": 1024
+    }
+  ],
+  "annotations": [
+    {
+      "id": 100,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [
+        380,
+        158,
+        95,
+        12
+      ],
+      "area": 1140,
+      "segmentation": [
+        [
+          380,
+          158,
+          475,
+          158,
+          475,
+          170,
+          380,
+          170
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "OPENS"
+    },
+    {
+      "id": 101,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [
+        380,
+        172,
+        150,
+        12
+      ],
+      "area": 1800,
+      "segmentation": [
+        [
+          380,
+          172,
+          530,
+          172,
+          530,
+          184,
+          380,
+          184
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "FOREMOST"
+    },
+    {
+      "id": 102,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [
+        380,
+        186,
+        133,
+        12
+      ],
+      "area": 1596,
+      "segmentation": [
+        [
+          380,
+          186,
+          513,
+          186,
+          513,
+          198,
+          380,
+          198
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "NORMALLY"
+    },
+    {
+      "id": 103,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [
+        174,
+        288,
+        667,
+        34
+      ],
+      "area": 22678,
+      "segmentation": [
+        [
+          174,
+          288,
+          841,
+          288,
+          841,
+          322,
+          174,
+          322
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "PATRICK SPECIFIED"
+    },
+    {
+      "id": 104,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [
+        158,
+        805,
+        318,
+        23
+      ],
+      "area": 7314,
+      "segmentation": [
+        [
+          158,
+          805,
+          476,
+          805,
+          476,
+          828,
+          158,
+          828
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "SACRED HAIR"
+    },
+    {
+      "id": 105,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [
+        675,
+        546,
+        142,
+        15
+      ],
+      "area": 2130,
+      "segmentation": [
+        [
+          675,
+          546,
+          817,
+          546,
+          817,
+          561,
+          675,
+          561
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "TARGET"
+    },
+    {
+      "id": 106,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [
+        327,
+        719,
+        160,
+        22
+      ],
+      "area": 3520,
+      "segmentation": [
+        [
+          327,
+          719,
+          487,
+          719,
+          487,
+          741,
+          327,
+          741
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "DRAWN"
+    },
+    {
+      "id": 107,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [
+        448,
+        423,
+        178,
+        20
+      ],
+      "area": 3560,
+      "segmentation": [
+        [
+          448,
+          423,
+          626,
+          423,
+          626,
+          443,
+          448,
+          443
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "REMOVE"
+    },
+    {
+      "id": 108,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [
+        448,
+        447,
+        420,
+        22
+      ],
+      "area": 9240,
+      "segmentation": [
+        [
+          448,
+          447,
+          868,
+          447,
+          868,
+          469,
+          448,
+          469
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "MANUFACTURERS"
+    },
+    {
+      "id": 109,
+      "image_id": 1,
+      "category_id": 1,
+      "bbox": [
+        214,
+        636,
+        563,
+        38
+      ],
+      "area": 21394,
+      "segmentation": [
+        [
+          214,
+          636,
+          777,
+          636,
+          777,
+          674,
+          214,
+          674
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "PITCHED PLASMA THEORIES"
+    },
+    {
+      "id": 200,
+      "image_id": 2,
+      "category_id": 1,
+      "bbox": [
+        164,
+        542,
+        655,
+        38
+      ],
+      "area": 24890,
+      "segmentation": [
+        [
+          164,
+          542,
+          819,
+          542,
+          819,
+          580,
+          164,
+          580
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "FNN YEMOMSROCM"
+    },
+    {
+      "id": 201,
+      "image_id": 2,
+      "category_id": 1,
+      "bbox": [
+        518,
+        308,
+        239,
+        17
+      ],
+      "area": 4063,
+      "segmentation": [
+        [
+          518,
+          308,
+          757,
+          308,
+          757,
+          325,
+          518,
+          325
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "WHOLESALE"
+    },
+    {
+      "id": 202,
+      "image_id": 2,
+      "category_id": 1,
+      "bbox": [
+        518,
+        328,
+        268,
+        17
+      ],
+      "area": 4556,
+      "segmentation": [
+        [
+          518,
+          328,
+          786,
+          328,
+          786,
+          345,
+          518,
+          345
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "UNEXPECTED"
+    },
+    {
+      "id": 203,
+      "image_id": 2,
+      "category_id": 1,
+      "bbox": [
+        518,
+        348,
+        112,
+        17
+      ],
+      "area": 1904,
+      "segmentation": [
+        [
+          518,
+          348,
+          630,
+          348,
+          630,
+          365,
+          518,
+          365
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "EATS"
+    },
+    {
+      "id": 204,
+      "image_id": 2,
+      "category_id": 1,
+      "bbox": [
+        152,
+        819,
+        710,
+        26
+      ],
+      "area": 18460,
+      "segmentation": [
+        [
+          152,
+          819,
+          862,
+          819,
+          862,
+          845,
+          152,
+          845
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "ILLEGAL VENT ARGENTINA"
+    },
+    {
+      "id": 205,
+      "image_id": 2,
+      "category_id": 1,
+      "bbox": [
+        312,
+        703,
+        152,
+        17
+      ],
+      "area": 2584,
+      "segmentation": [
+        [
+          312,
+          703,
+          464,
+          703,
+          464,
+          720,
+          312,
+          720
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "SHIFTS"
+    },
+    {
+      "id": 206,
+      "image_id": 2,
+      "category_id": 1,
+      "bbox": [
+        312,
+        723,
+        130,
+        9
+      ],
+      "area": 1170,
+      "segmentation": [
+        [
+          312,
+          723,
+          442,
+          723,
+          442,
+          732,
+          312,
+          732
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "RENT YAHOO"
+    },
+    {
+      "id": 207,
+      "image_id": 2,
+      "category_id": 1,
+      "bbox": [
+        158,
+        182,
+        671,
+        21
+      ],
+      "area": 14091,
+      "segmentation": [
+        [
+          158,
+          182,
+          829,
+          182,
+          829,
+          203,
+          158,
+          203
+        ]
+      ],
+      "iscrowd": 0,
+      "text": "DAD WINNERS GUESTS NOVA"
+    }
+  ]
+}
