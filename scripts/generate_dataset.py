@@ -1227,11 +1227,9 @@ class AurebeshDatasetGenerator:
             # Setup LMDB
             lmdb_env = lmdb.open(str(lmdb_dir), map_size=50 * 1024 * 1024 * 1024)  # 50GB
             
-            # Annotations
+            # Annotations in smart format
             annotations = {
-                'images': [],
-                'annotations': [],
-                'categories': [{'id': 1, 'name': 'text'}]
+                'images': []
             }
             
             generated_count = 0
@@ -1346,14 +1344,11 @@ class AurebeshDatasetGenerator:
                         debug_path = debug_dir / debug_name
                         self._save_debug_image(image_aug, text_annotations, debug_path)
                     
-                    # Add to COCO annotations
-                    image_info = {
-                        'id': global_idx,
+                    # Add to smart annotations format
+                    image_annotation = {
                         'file_name': image_name,
-                        'width': self.resolution,
-                        'height': self.resolution
+                        'annotations': []
                     }
-                    annotations['images'].append(image_info)
                     
                     # Process each text instance
                     for ann_idx, ann in enumerate(text_annotations):
@@ -1374,21 +1369,16 @@ class AurebeshDatasetGenerator:
                         self._save_lmdb(text_crop, ann['text'], lmdb_env, global_lmdb_idx)
                         global_lmdb_idx += 1
                         
-                        # Add detection annotation
-                        x, y, x2, y2 = bbox
-                        w, h = x2 - x, y2 - y
-                        
-                        det_ann = {
-                            'id': global_idx * 100 + ann_idx,
-                            'image_id': global_idx,
-                            'category_id': 1,
-                            'bbox': [x, y, w, h],
-                            'area': w * h,
-                            'segmentation': [[coord for point in ann['polygon'] for coord in point]],  # Flatten polygon
-                            'iscrowd': 0,
-                            'text': ann['text']
+                        # Add annotation in smart format
+                        text_annotation = {
+                            'text': ann['text'],
+                            'polygon': ann['polygon']
                         }
-                        annotations['annotations'].append(det_ann)
+                        image_annotation['annotations'].append(text_annotation)
+                    
+                    # Only add image if it has annotations
+                    if image_annotation['annotations']:
+                        annotations['images'].append(image_annotation)
                     
                     generated_count += 1
                     global_idx += 1
