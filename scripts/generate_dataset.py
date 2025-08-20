@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Generate synthetic Aurebesh dataset using SynthTIGER.
-Creates images with text detection annotations and LMDB for recognition.
-"""
-
 import argparse
 import json
 import random

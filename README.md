@@ -10,8 +10,6 @@ docTR + PyTorch on Apple Silicon M4.*
 |-------|-----------------|------------|
 | **Detection** | **DBNet + MobileNetV3-Large** | pretrained warm-start & fine-tune |
 | **Recognition** | **CRNN + MobileNetV3-Small** | custom Aurebesh charset |
-| **Data synth** | **SynthTIGER** | font-weighted sampling, optional solid / gradient BG |
-| **Monitoring** | **TensorBoard** | scalars, PR-curves, sample overlays |
 
 ---
 
