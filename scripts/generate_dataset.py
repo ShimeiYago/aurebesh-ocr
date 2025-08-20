@@ -1031,7 +1031,7 @@ class AurebeshDatasetGenerator:
                         # Paste rotated text onto background
                         bg.paste(rotated_text, (paste_x, paste_y), rotated_text)
                         
-                        # Find actual non-transparent pixels to create accurate bbox
+                        # Find actual non-transparent pixels to create accurate bbox and rotated polygon
                         # Convert rotated text to numpy for easier processing
                         rot_array = np.array(rotated_text)
                         alpha_channel = rot_array[:, :, 3]  # Alpha channel
@@ -1051,16 +1051,47 @@ class AurebeshDatasetGenerator:
                                 actual_x2 > image_size[0] or actual_y2 > image_size[1]):
                                 continue  # Skip this text block if it extends outside image bounds
                             
-                            # Create annotation with actual bounds (no clamping)
+                            # Calculate the rotated polygon corners
+                            # Original text bbox corners before rotation (relative to text image center)
+                            orig_text_width = text_width
+                            orig_text_height = text_height
+                            
+                            # Center of the original text (before rotation)
+                            text_center_x = temp_size[0] / 2
+                            text_center_y = temp_size[1] / 2
+                            
+                            # Original corners relative to center
+                            corners = [
+                                (padding - text_center_x, padding - text_center_y),  # Top-left
+                                (padding + orig_text_width - text_center_x, padding - text_center_y),  # Top-right
+                                (padding + orig_text_width - text_center_x, padding + orig_text_height - text_center_y),  # Bottom-right
+                                (padding - text_center_x, padding + orig_text_height - text_center_y)  # Bottom-left
+                            ]
+                            
+                            # Rotate corners
+                            angle_rad = np.radians(angle)
+                            cos_a = np.cos(angle_rad)
+                            sin_a = np.sin(angle_rad)
+                            
+                            rotated_corners = []
+                            for cx, cy in corners:
+                                # Rotate point
+                                rx = cx * cos_a - cy * sin_a
+                                ry = cx * sin_a + cy * cos_a
+                                
+                                # Transform to final position
+                                # The rotated image center is at (rot_w/2, rot_h/2)
+                                # And it's pasted at (paste_x, paste_y)
+                                final_x = paste_x + rot_w / 2 + rx
+                                final_y = paste_y + rot_h / 2 + ry
+                                
+                                rotated_corners.append([int(final_x), int(final_y)])
+                            
+                            # Create annotation with rotated polygon
                             annotation = {
                                 'text': block_text,
                                 'bbox': [actual_x1, actual_y1, actual_x2, actual_y2],
-                                'polygon': [
-                                    [actual_x1, actual_y1],
-                                    [actual_x2, actual_y1],
-                                    [actual_x2, actual_y2],
-                                    [actual_x1, actual_y2]
-                                ]
+                                'polygon': rotated_corners
                             }
                             annotations.append(annotation)
                         else:
@@ -1168,17 +1199,32 @@ class AurebeshDatasetGenerator:
             bbox = ann['bbox']
             polygon = ann['polygon']
             
-            # Draw bounding box in red
-            draw.rectangle(bbox, outline='red', width=2)
+            # Draw bounding box in red (thinner line)
+            draw.rectangle(bbox, outline='red', width=1)
             
-            # Draw polygon in blue
+            # Draw polygon in blue (thicker line to emphasize the actual text region)
             if len(polygon) >= 3:
                 flat_polygon = [coord for point in polygon for coord in point]
-                draw.polygon(flat_polygon, outline='blue', width=2)
+                draw.polygon(flat_polygon, outline='blue', width=3)
+                
+                # Also draw polygon vertices as small circles
+                for point in polygon:
+                    x, y = point
+                    draw.ellipse([x-3, y-3, x+3, y+3], fill='green', outline='green')
             
-            # Draw text label
+            # Draw text label with background for better visibility
+            text_to_show = ann['text'][:20]
+            try:
+                # Try to get text size for background
+                font = ImageFont.load_default()
+                bbox_text = draw.textbbox((bbox[0], bbox[1] - 20), text_to_show, font=font)
+                # Draw background rectangle
+                draw.rectangle([bbox_text[0]-2, bbox_text[1]-2, bbox_text[2]+2, bbox_text[3]+2], fill='black')
+            except:
+                pass
+            
             text_pos = (bbox[0], bbox[1] - 20)
-            draw.text(text_pos, ann['text'][:20], fill='yellow')
+            draw.text(text_pos, text_to_show, fill='yellow')
         
         debug_img.save(output_path)
 
@@ -1259,12 +1305,14 @@ class AurebeshDatasetGenerator:
                     # Apply augmentations with bbox transformation
                     image_np = np.array(image)
                     
-                    # Prepare bboxes for albumentations (convert to pascal_voc format)
+                    # For augmentations, we'll use keypoints to track polygon corners
+                    # This ensures rotated polygons are properly transformed
                     bboxes = []
                     labels = []
+                    keypoints = []
                     valid_annotations = []
                     
-                    for i, ann in enumerate(text_annotations):
+                    for ann in text_annotations:
                         # Convert from [x1, y1, x2, y2] to pascal_voc format [x_min, y_min, x_max, y_max]
                         bbox = ann['bbox']
                         
@@ -1281,6 +1329,14 @@ class AurebeshDatasetGenerator:
                         
                         bboxes.append([bbox[0], bbox[1], bbox[2], bbox[3]])
                         labels.append(len(valid_annotations))  # Use valid annotation index
+                        
+                        # Store polygon corners as keypoints for transformation
+                        polygon_kps = []
+                        for point in ann['polygon']:
+                            # Each keypoint is [x, y] - we'll add visibility flag 1
+                            polygon_kps.extend([point[0], point[1], 1])
+                        keypoints.append(polygon_kps)
+                        
                         valid_annotations.append(ann)
                     
                     # Skip if no valid bboxes remain
@@ -1288,20 +1344,56 @@ class AurebeshDatasetGenerator:
                         self.logger.warning("No valid bboxes after filtering, retrying...")
                         continue
                     
+                    # Setup keypoint params for albumentations
+                    keypoint_params = A.KeypointParams(format='xy', remove_invisible=False)
+                    
+                    # Create augmentation pipeline with keypoint support
+                    aug_with_keypoints = A.Compose(
+                        self.augmentations.transforms,
+                        bbox_params=A.BboxParams(
+                            format='pascal_voc',
+                            label_fields=['labels'],
+                            min_visibility=0.3
+                        ),
+                        keypoint_params=keypoint_params
+                    )
+                    
+                    # Flatten keypoints for albumentations format
+                    flat_keypoints = []
+                    for kps in keypoints:
+                        # Convert from [x1,y1,v1, x2,y2,v2, ...] to [(x1,y1), (x2,y2), ...]
+                        for i in range(0, len(kps), 3):
+                            flat_keypoints.append((kps[i], kps[i+1]))
+                    
                     # Apply augmentations
-                    augmented = self.augmentations(
+                    augmented = aug_with_keypoints(
                         image=image_np,
                         bboxes=bboxes,
-                        labels=labels
+                        labels=labels,
+                        keypoints=flat_keypoints
                     )
                     
                     image_aug = Image.fromarray(augmented['image'])
                     augmented_bboxes = augmented['bboxes']
                     augmented_labels = augmented['labels']
+                    augmented_keypoints = augmented['keypoints']
                     
-                    # Update text_annotations with transformed bboxes
+                    # Reconstruct polygons from augmented keypoints
+                    keypoint_idx = 0
+                    augmented_polygons = []
+                    for _ in range(len(valid_annotations)):
+                        # Each annotation has 4 keypoints (polygon corners)
+                        polygon = []
+                        for _ in range(4):
+                            if keypoint_idx < len(augmented_keypoints):
+                                kp = augmented_keypoints[keypoint_idx]
+                                polygon.append([int(kp[0]), int(kp[1])])
+                                keypoint_idx += 1
+                        augmented_polygons.append(polygon)
+                    
+                    # Update text_annotations with transformed bboxes and polygons
                     updated_annotations = []
-                    for i, (bbox, label) in enumerate(zip(augmented_bboxes, augmented_labels)):
+                    for bbox, label, polygon in zip(augmented_bboxes, augmented_labels, augmented_polygons):
                         # Get original annotation (ensure label is integer)
                         label_idx = int(label)
                         orig_ann = valid_annotations[label_idx]
@@ -1322,10 +1414,8 @@ class AurebeshDatasetGenerator:
                         updated_ann = orig_ann.copy()
                         updated_ann['bbox'] = [x1, y1, x2, y2]
                         
-                        # Update polygon
-                        updated_ann['polygon'] = [
-                            [x1, y1], [x2, y1], [x2, y2], [x1, y2]
-                        ]
+                        # Use the transformed polygon
+                        updated_ann['polygon'] = polygon
                         
                         updated_annotations.append(updated_ann)
                     
@@ -1351,7 +1441,7 @@ class AurebeshDatasetGenerator:
                     }
                     
                     # Process each text instance
-                    for ann_idx, ann in enumerate(text_annotations):
+                    for ann in text_annotations:
                         # Crop text region for recognizer
                         bbox = ann['bbox']
                         
