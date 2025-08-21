@@ -553,7 +553,7 @@ class AurebeshDatasetGenerator:
         draw: ImageDraw.Draw,
         line_spacing: float = 1.2
     ) -> List[Dict]:
-        """Render multiple lines of text with individual bboxes."""
+        """Render multiple lines of text with word-level bboxes."""
         annotations = []
         current_y = y
         effects = self.config['style']['effects']
@@ -564,49 +564,65 @@ class AurebeshDatasetGenerator:
             except:
                 font = ImageFont.load_default()
             
-            # Get text metrics
-            bbox = draw.textbbox((0, 0), line_text, font=font)
-            text_height = bbox[3] - bbox[1]
-            actual_x_offset = -bbox[0]
-            actual_y_offset = -bbox[1]
+            # Get line metrics for positioning
+            line_bbox = draw.textbbox((0, 0), line_text, font=font)
+            text_height = line_bbox[3] - line_bbox[1]
+            actual_y_offset = -line_bbox[1]
             
-            # Adjust position
-            text_x = x + actual_x_offset
-            text_y = current_y + actual_y_offset
+            # Calculate base line position
+            line_y = current_y + actual_y_offset
             
-            # Shadow
-            if random.random() < effects['shadow_prob']:
-                shadow_offset = random.randint(2, 5)
-                shadow_color = tuple(int(c * 0.3) for c in text_color)
-                draw.text((text_x + shadow_offset, text_y + shadow_offset), 
-                        line_text, font=font, fill=shadow_color)
+            # Split line into words and render each word separately
+            words = line_text.split()
+            current_x = x
             
-            # Border
-            if random.random() < effects['border_prob']:
-                for dx in [-1, 0, 1]:
-                    for dy in [-1, 0, 1]:
-                        if dx != 0 or dy != 0:
-                            draw.text((text_x + dx, text_y + dy), 
-                                    line_text, font=font, fill=(0, 0, 0))
-            
-            # Draw the line
-            draw.text((text_x, text_y), line_text, font=font, fill=text_color)
-            
-            # Get precise bbox for this line
-            line_bbox = draw.textbbox((text_x, text_y), line_text, font=font)
-            
-            # Create annotation for this line
-            annotation = {
-                'text': line_text,
-                'bbox': [line_bbox[0], line_bbox[1], line_bbox[2], line_bbox[3]],
-                'polygon': [
-                    [line_bbox[0], line_bbox[1]],
-                    [line_bbox[2], line_bbox[1]],
-                    [line_bbox[2], line_bbox[3]],
-                    [line_bbox[0], line_bbox[3]]
-                ]
-            }
-            annotations.append(annotation)
+            for word in words:
+                # Get word metrics
+                word_bbox = draw.textbbox((0, 0), word, font=font)
+                actual_x_offset = -word_bbox[0]
+                
+                # Adjust word position
+                word_x = current_x + actual_x_offset
+                word_y = line_y
+                
+                # Apply effects (shadow/border) for each word
+                if random.random() < effects['shadow_prob']:
+                    shadow_offset = random.randint(2, 5)
+                    shadow_color = tuple(int(c * 0.3) for c in text_color)
+                    draw.text((word_x + shadow_offset, word_y + shadow_offset), 
+                            word, font=font, fill=shadow_color)
+                
+                if random.random() < effects['border_prob']:
+                    for dx in [-1, 0, 1]:
+                        for dy in [-1, 0, 1]:
+                            if dx != 0 or dy != 0:
+                                draw.text((word_x + dx, word_y + dy), 
+                                        word, font=font, fill=(0, 0, 0))
+                
+                # Draw the word
+                draw.text((word_x, word_y), word, font=font, fill=text_color)
+                
+                # Get precise bbox for this word
+                final_word_bbox = draw.textbbox((word_x, word_y), word, font=font)
+                
+                # Create annotation for this word
+                annotation = {
+                    'text': word,
+                    'bbox': [final_word_bbox[0], final_word_bbox[1], 
+                            final_word_bbox[2], final_word_bbox[3]],
+                    'polygon': [
+                        [final_word_bbox[0], final_word_bbox[1]],
+                        [final_word_bbox[2], final_word_bbox[1]],
+                        [final_word_bbox[2], final_word_bbox[3]],
+                        [final_word_bbox[0], final_word_bbox[3]]
+                    ]
+                }
+                annotations.append(annotation)
+                
+                # Move to next word position (add word width + space)
+                word_width = word_bbox[2] - word_bbox[0]
+                space_width = draw.textbbox((0, 0), ' ', font=font)[2]
+                current_x += word_width + space_width
             
             # Move to next line
             current_y += int(text_height * line_spacing)
@@ -739,7 +755,7 @@ class AurebeshDatasetGenerator:
         if adaptive_spacing and num_text_blocks > 5:
             # Reduce spacing for more blocks, but keep a minimum
             spacing_factor = max(0.5, 1.0 - (num_text_blocks - 5) * 0.1)
-            min_spacing = max(20, int(base_min_spacing * spacing_factor))
+            min_spacing = max(25, int(base_min_spacing * spacing_factor))  # Increased minimum spacing
         else:
             min_spacing = base_min_spacing
         
@@ -957,6 +973,8 @@ class AurebeshDatasetGenerator:
             
             # Try to find non-overlapping position with accurate dimensions
             max_attempts = 100
+            x, y = 0, 0  # Initialize variables
+            placement_width, placement_height = text_width, text_height  # Initialize placement dimensions
             
             for attempt in range(max_attempts):
                 # Calculate safe placement boundaries with accurate dimensions
@@ -993,220 +1011,236 @@ class AurebeshDatasetGenerator:
                         overlap = True
                         break
                 
-                if not overlap or attempt == max_attempts - 1:
-                    # Found non-overlapping position or last attempt
+                if not overlap:
+                    # Found non-overlapping position
                     occupied_regions.append(new_region)
                     
                     # Mark spatial grid as occupied
                     self._mark_grid_occupied(spatial_grid, new_region, grid_cell_size)
-                    
-                    # Draw text with pre-determined rotation
-                    if will_rotate:
-                        # Create text image with precise dimensions
-                        # Add padding to prevent clipping during rotation
-                        padding = 20
-                        temp_size = (int(text_width) + 2*padding, int(text_height) + 2*padding)
-                        text_img = Image.new('RGBA', temp_size, (0, 0, 0, 0))
-                        text_draw = ImageDraw.Draw(text_img)
-                        
-                        # Center text in temporary image
-                        temp_x = padding
-                        temp_y = padding
-                        
-                        # Draw text with effects on temporary image
-                        # Shadow
-                        if random.random() < effects['shadow_prob']:
-                            shadow_offset = random.randint(2, 5)
-                            shadow_color = tuple(int(c * 0.3) for c in text_color) + (255,)
-                            text_draw.text((temp_x + shadow_offset, temp_y + shadow_offset), 
-                                         block_text, font=font, fill=shadow_color)
-                        
-                        # Border
-                        if random.random() < effects['border_prob']:
-                            for dx in [-1, 0, 1]:
-                                for dy in [-1, 0, 1]:
-                                    if dx != 0 or dy != 0:
-                                        text_draw.text((temp_x + dx, temp_y + dy), 
-                                                     block_text, font=font, fill=(0, 0, 0, 255))
-                        
-                        # Main text
-                        text_draw.text((temp_x, temp_y), block_text, font=font, fill=text_color + (255,))
-                        
-                        # Rotate the text image
-                        rotated_text = text_img.rotate(-angle, expand=True, fillcolor=(0, 0, 0, 0))
-                        
-                        # Calculate precise paste position
-                        rot_w, rot_h = rotated_text.size
-                        
-                        # Center the rotated text within the allocated region
-                        paste_x = x + int(placement_width - rot_w) // 2
-                        paste_y = y + int(placement_height - rot_h) // 2
-                        
-                        # Final boundary check - if rotated text would exceed bounds, skip this text
-                        if (paste_x < 0 or paste_y < 0 or 
-                            paste_x + rot_w > image_size[0] or 
-                            paste_y + rot_h > image_size[1]):
-                            continue  # Skip this text block
-                        
-                        # Paste rotated text onto background
-                        bg.paste(rotated_text, (paste_x, paste_y), rotated_text)
-                        
-                        # Find actual non-transparent pixels to create accurate bbox and rotated polygon
-                        # Convert rotated text to numpy for easier processing
-                        rot_array = np.array(rotated_text)
-                        alpha_channel = rot_array[:, :, 3]  # Alpha channel
-                        
-                        # Find bounds of non-transparent pixels
-                        y_indices, x_indices = np.where(alpha_channel > 0)
-                        
-                        if len(x_indices) > 0 and len(y_indices) > 0:
-                            # Calculate actual text bounds relative to paste position
-                            actual_x1 = paste_x + np.min(x_indices)
-                            actual_y1 = paste_y + np.min(y_indices)
-                            actual_x2 = paste_x + np.max(x_indices) + 1
-                            actual_y2 = paste_y + np.max(y_indices) + 1
+                    break
+            else:
+                # Could not find non-overlapping position after max_attempts
+                self.logger.debug(f"Skipping text block {block_idx} due to no available space")
+                continue  # Skip this text block
+            
+            # Draw text with pre-determined rotation
+            if will_rotate:
+                # For rotated text, we'll render each word separately and then combine
+                words = block_text.split()
+                word_annotations = []
+                
+                for word in words:
+                            # Get word dimensions
+                            word_bbox = draw.textbbox((0, 0), word, font=font)
+                            word_width = word_bbox[2] - word_bbox[0]
+                            word_height = word_bbox[3] - word_bbox[1]
                             
-                            # Check if text bounds are within image (skip if outside)
-                            if (actual_x1 < 0 or actual_y1 < 0 or 
-                                actual_x2 > image_size[0] or actual_y2 > image_size[1]):
-                                continue  # Skip this text block if it extends outside image bounds
+                            # Create text image for this word with precise dimensions
+                            padding = 20
+                            temp_size = (int(word_width) + 2*padding, int(word_height) + 2*padding)
+                            text_img = Image.new('RGBA', temp_size, (0, 0, 0, 0))
+                            text_draw = ImageDraw.Draw(text_img)
                             
-                            # Calculate the rotated polygon corners
-                            # Original text bbox corners before rotation (relative to text image center)
-                            orig_text_width = text_width
-                            orig_text_height = text_height
+                            # Center word in temporary image
+                            temp_x = padding
+                            temp_y = padding
                             
-                            # Center of the original text (before rotation)
-                            text_center_x = temp_size[0] / 2
-                            text_center_y = temp_size[1] / 2
-                            
-                            # Original corners relative to center
-                            corners = [
-                                (padding - text_center_x, padding - text_center_y),  # Top-left
-                                (padding + orig_text_width - text_center_x, padding - text_center_y),  # Top-right
-                                (padding + orig_text_width - text_center_x, padding + orig_text_height - text_center_y),  # Bottom-right
-                                (padding - text_center_x, padding + orig_text_height - text_center_y)  # Bottom-left
-                            ]
-                            
-                            # Rotate corners
-                            angle_rad = np.radians(angle)
-                            cos_a = np.cos(angle_rad)
-                            sin_a = np.sin(angle_rad)
-                            
-                            rotated_corners = []
-                            for cx, cy in corners:
-                                # Rotate point
-                                rx = cx * cos_a - cy * sin_a
-                                ry = cx * sin_a + cy * cos_a
-                                
-                                # Transform to final position
-                                # The rotated image center is at (rot_w/2, rot_h/2)
-                                # And it's pasted at (paste_x, paste_y)
-                                final_x = paste_x + rot_w / 2 + rx
-                                final_y = paste_y + rot_h / 2 + ry
-                                
-                                rotated_corners.append([int(final_x), int(final_y)])
-                            
-                            # Create annotation with rotated polygon
-                            annotation = {
-                                'text': block_text,
-                                'bbox': [actual_x1, actual_y1, actual_x2, actual_y2],
-                                'polygon': rotated_corners
-                            }
-                            annotations.append(annotation)
-                        else:
-                            # Skip if no visible pixels
-                            continue
-                    else:
-                        # No rotation - handle single or multi-line text
-                        if variant_type == 'mixed':
-                            # Use the mixed text rendering function
-                            mixed_annotations = self._render_mixed_text(
-                                block_text, is_alphabet_list, font_path, font_size, 
-                                x, y, text_color, draw
-                            )
-                            
-                            # Filter out annotations that exceed bounds
-                            valid_annotations = []
-                            for ann in mixed_annotations:
-                                bbox = ann['bbox']
-                                if not (bbox[0] < 0 or bbox[1] < 0 or
-                                        bbox[2] > image_size[0] or bbox[3] > image_size[1]):
-                                    valid_annotations.append(ann)
-                            
-                            # Only add if we have at least one valid annotation
-                            if valid_annotations:
-                                annotations.extend(valid_annotations)
-                        elif variant_type in ['multiline', 'size_contrast']:
-                            # Use the multiline rendering function
-                            line_annotations = self._render_multiline_text(
-                                lines, font_path, font_sizes, x, y, text_color, draw
-                            )
-                            
-                            # Filter out annotations that exceed bounds
-                            valid_annotations = []
-                            for ann in line_annotations:
-                                bbox = ann['bbox']
-                                if not (bbox[0] < 0 or bbox[1] < 0 or
-                                        bbox[2] > image_size[0] or bbox[3] > image_size[1]):
-                                    valid_annotations.append(ann)
-                            
-                            # Only add if we have at least one valid annotation
-                            if valid_annotations:
-                                annotations.extend(valid_annotations)
-                        else:
-                            # Single line text - original logic
-                            # Calculate precise text position with baseline considerations
-                            # Get accurate text metrics
-                            bbox = draw.textbbox((0, 0), block_text, font=font)
-                            actual_x_offset = -bbox[0]  # Left bearing
-                            actual_y_offset = -bbox[1]  # Top bearing
-                            
-                            # Adjust position to account for font metrics
-                            text_x = x + actual_x_offset
-                            text_y = y + actual_y_offset
-                            
-                            # Final boundary check - ensure text won't exceed image bounds
-                            final_bbox_check = draw.textbbox((text_x, text_y), block_text, font=font)
-                            if (final_bbox_check[0] < 0 or final_bbox_check[1] < 0 or
-                                final_bbox_check[2] > image_size[0] or final_bbox_check[3] > image_size[1]):
-                                continue  # Skip this text block
-                            
+                            # Draw word with effects on temporary image
                             # Shadow
                             if random.random() < effects['shadow_prob']:
                                 shadow_offset = random.randint(2, 5)
-                                shadow_color = tuple(int(c * 0.3) for c in text_color)
-                                draw.text((text_x + shadow_offset, text_y + shadow_offset), 
-                                        block_text, font=font, fill=shadow_color)
+                                shadow_color = tuple(int(c * 0.3) for c in text_color) + (255,)
+                                text_draw.text((temp_x + shadow_offset, temp_y + shadow_offset), 
+                                             word, font=font, fill=shadow_color)
                             
                             # Border
                             if random.random() < effects['border_prob']:
                                 for dx in [-1, 0, 1]:
                                     for dy in [-1, 0, 1]:
                                         if dx != 0 or dy != 0:
-                                            draw.text((text_x + dx, text_y + dy), 
-                                                    block_text, font=font, fill=(0, 0, 0))
+                                            text_draw.text((temp_x + dx, temp_y + dy), 
+                                                         word, font=font, fill=(0, 0, 0, 255))
                             
                             # Main text
-                            draw.text((text_x, text_y), block_text, font=font, fill=text_color)
+                            text_draw.text((temp_x, temp_y), word, font=font, fill=text_color + (255,))
                             
-                            # Create precise bounding box using actual text metrics
-                            final_bbox = draw.textbbox((text_x, text_y), block_text, font=font)
+                            # Rotate the word image
+                            rotated_word = text_img.rotate(-angle, expand=True, fillcolor=(0, 0, 0, 0))
                             
-                            # Create annotation with precise coordinates (no clamping needed)
-                            annotation = {
-                                'text': block_text,
-                                'bbox': [final_bbox[0], final_bbox[1], final_bbox[2], final_bbox[3]],
-                                'polygon': [
-                                    [final_bbox[0], final_bbox[1]],
-                                    [final_bbox[2], final_bbox[1]],
-                                    [final_bbox[2], final_bbox[3]],
-                                    [final_bbox[0], final_bbox[3]]
+                            # Calculate paste position for this word
+                            rot_w, rot_h = rotated_word.size
+                            
+                            # For simplicity, we'll place each word at the same base position
+                            # In a real implementation, you might want to calculate word spacing
+                            paste_x = x + int(placement_width - rot_w) // 2
+                            paste_y = y + int(placement_height - rot_h) // 2
+                            
+                            # Final boundary check
+                            if (paste_x < 0 or paste_y < 0 or 
+                                paste_x + rot_w > image_size[0] or 
+                                paste_y + rot_h > image_size[1]):
+                                continue  # Skip this word
+                            
+                            # Paste rotated word onto background
+                            bg.paste(rotated_word, (paste_x, paste_y), rotated_word)
+                            
+                            # Find actual non-transparent pixels for this word
+                            rot_array = np.array(rotated_word)
+                            alpha_channel = rot_array[:, :, 3]
+                            
+                            # Find bounds of non-transparent pixels
+                            y_indices, x_indices = np.where(alpha_channel > 0)
+                            
+                            if len(x_indices) > 0 and len(y_indices) > 0:
+                                # Calculate actual word bounds
+                                actual_x1 = paste_x + np.min(x_indices)
+                                actual_y1 = paste_y + np.min(y_indices)
+                                actual_x2 = paste_x + np.max(x_indices) + 1
+                                actual_y2 = paste_y + np.max(y_indices) + 1
+                                
+                                # Skip if outside bounds
+                                if (actual_x1 < 0 or actual_y1 < 0 or 
+                                    actual_x2 > image_size[0] or actual_y2 > image_size[1]):
+                                    continue
+                                
+                                # Calculate rotated polygon for this word
+                                text_center_x = temp_size[0] / 2
+                                text_center_y = temp_size[1] / 2
+                                
+                                corners = [
+                                    (padding - text_center_x, padding - text_center_y),
+                                    (padding + word_width - text_center_x, padding - text_center_y),
+                                    (padding + word_width - text_center_x, padding + word_height - text_center_y),
+                                    (padding - text_center_x, padding + word_height - text_center_y)
                                 ]
-                            }
-                            
-                            annotations.append(annotation)
+                                
+                                # Rotate corners
+                                angle_rad = np.radians(angle)
+                                cos_a = np.cos(angle_rad)
+                                sin_a = np.sin(angle_rad)
+                                
+                                rotated_corners = []
+                                for cx, cy in corners:
+                                    rx = cx * cos_a - cy * sin_a
+                                    ry = cx * sin_a + cy * cos_a
+                                    
+                                    final_x = paste_x + rot_w / 2 + rx
+                                    final_y = paste_y + rot_h / 2 + ry
+                                    
+                                    rotated_corners.append([int(final_x), int(final_y)])
+                                
+                                # Create annotation for this word
+                                word_annotation = {
+                                    'text': word,
+                                    'bbox': [actual_x1, actual_y1, actual_x2, actual_y2],
+                                    'polygon': rotated_corners
+                                }
+                                word_annotations.append(word_annotation)
+                
+                # Add all word annotations
+                annotations.extend(word_annotations)
+            else:
+                # No rotation - handle single or multi-line text
+                if variant_type == 'mixed':
+                    # Use the mixed text rendering function
+                    mixed_annotations = self._render_mixed_text(
+                        block_text, is_alphabet_list, font_path, font_size, 
+                        x, y, text_color, draw
+                    )
+                    
+                    # Filter out annotations that exceed bounds
+                    valid_annotations = []
+                    for ann in mixed_annotations:
+                        bbox = ann['bbox']
+                        if not (bbox[0] < 0 or bbox[1] < 0 or
+                                bbox[2] > image_size[0] or bbox[3] > image_size[1]):
+                            valid_annotations.append(ann)
+                    
+                    # Only add if we have at least one valid annotation
+                    if valid_annotations:
+                        annotations.extend(valid_annotations)
+                elif variant_type in ['multiline', 'size_contrast']:
+                    # Use the multiline rendering function
+                    line_annotations = self._render_multiline_text(
+                        lines, font_path, font_sizes, x, y, text_color, draw
+                    )
+                    
+                    # Filter out annotations that exceed bounds
+                    valid_annotations = []
+                    for ann in line_annotations:
+                        bbox = ann['bbox']
+                        if not (bbox[0] < 0 or bbox[1] < 0 or
+                                bbox[2] > image_size[0] or bbox[3] > image_size[1]):
+                            valid_annotations.append(ann)
+                    
+                    # Only add if we have at least one valid annotation
+                    if valid_annotations:
+                        annotations.extend(valid_annotations)
+                else:
+                    # Single line text - render word by word
+                    words = block_text.split()
+                    current_x = x
+                    
+                    for word in words:
+                        # Get word metrics
+                        word_bbox = draw.textbbox((0, 0), word, font=font)
+                        actual_x_offset = -word_bbox[0]  # Left bearing
+                        actual_y_offset = -word_bbox[1]  # Top bearing
+                        
+                        # Adjust position to account for font metrics
+                        word_x = current_x + actual_x_offset
+                        word_y = y + actual_y_offset
+                        
+                        # Final boundary check - ensure word won't exceed image bounds
+                        final_bbox_check = draw.textbbox((word_x, word_y), word, font=font)
+                        if (final_bbox_check[0] < 0 or final_bbox_check[1] < 0 or
+                            final_bbox_check[2] > image_size[0] or final_bbox_check[3] > image_size[1]):
+                            break  # Skip remaining words in this line
+                        
+                        # Shadow
+                        if random.random() < effects['shadow_prob']:
+                            shadow_offset = random.randint(2, 5)
+                            shadow_color = tuple(int(c * 0.3) for c in text_color)
+                            draw.text((word_x + shadow_offset, word_y + shadow_offset), 
+                                    word, font=font, fill=shadow_color)
+                        
+                        # Border
+                        if random.random() < effects['border_prob']:
+                            for dx in [-1, 0, 1]:
+                                for dy in [-1, 0, 1]:
+                                    if dx != 0 or dy != 0:
+                                        draw.text((word_x + dx, word_y + dy), 
+                                                word, font=font, fill=(0, 0, 0))
+                        
+                        # Main text
+                        draw.text((word_x, word_y), word, font=font, fill=text_color)
+                        
+                        # Create precise bounding box using actual text metrics
+                        final_bbox = draw.textbbox((word_x, word_y), word, font=font)
+                        
+                        # Create annotation with precise coordinates
+                        annotation = {
+                            'text': word,
+                            'bbox': [final_bbox[0], final_bbox[1], final_bbox[2], final_bbox[3]],
+                            'polygon': [
+                                [final_bbox[0], final_bbox[1]],
+                                [final_bbox[2], final_bbox[1]],
+                                [final_bbox[2], final_bbox[3]],
+                                [final_bbox[0], final_bbox[3]]
+                            ]
+                        }
+                        
+                        annotations.append(annotation)
+                        
+                        # Move to next word position (add word width + space)
+                        word_width = word_bbox[2] - word_bbox[0]
+                        space_width = draw.textbbox((0, 0), ' ', font=font)[2]
+                        current_x += word_width + space_width
                     break
+        
+        # Log placement statistics
+        placed_blocks = len(annotations)
+        self.logger.debug(f"Successfully placed {placed_blocks}/{num_text_blocks} text blocks with min_spacing={min_spacing}")
         
         return bg, annotations
     
