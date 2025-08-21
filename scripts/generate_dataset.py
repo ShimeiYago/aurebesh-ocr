@@ -8,8 +8,6 @@ from PIL import Image, ImageDraw, ImageFont
 import cv2
 import albumentations as A
 from tqdm import tqdm
-import lmdb
-import pickle
 from wordfreq import top_n_list
 
 from utils import setup_logger, ensure_dir, load_config, get_charset, STAR_WARS_VOCABULARY
@@ -1250,21 +1248,21 @@ class AurebeshDatasetGenerator:
         
         debug_img.save(output_path)
 
-    def _save_lmdb(self, image: Image.Image, text: str, lmdb_env, lmdb_idx: int):
-        """Save cropped text image to LMDB for recognizer."""
-        # Convert to bytes
-        img_bytes = cv2.imencode('.png', np.array(image))[1].tobytes()
+    def _save_cropped_image(self, image: Image.Image, text: str, cropped_images_dir: Path, image_name: str, crop_idx: int) -> str:
+        """Save cropped text image for recognizer."""
+        # Create filename for cropped image
+        crop_filename = f"{image_name.stem}_{crop_idx:02d}.jpg"
+        crop_path = cropped_images_dir / crop_filename
         
-        # Create entry
-        entry = {
-            'image': img_bytes,
-            'text': text,
-            'idx': lmdb_idx
-        }
+        # Convert to RGB if needed
+        if image.mode == 'RGBA':
+            rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+            rgb_image.paste(image, mask=image.split()[-1])
+            rgb_image.save(crop_path, 'JPEG', quality=95)
+        else:
+            image.save(crop_path, 'JPEG', quality=95)
         
-        # Save to LMDB
-        with lmdb_env.begin(write=True) as txn:
-            txn.put(str(lmdb_idx).encode(), pickle.dumps(entry))
+        return crop_filename
     
     def generate(self):
         """Generate complete dataset."""
@@ -1282,7 +1280,6 @@ class AurebeshDatasetGenerator:
         }
         
         global_idx = 0
-        global_lmdb_idx = 0  # Separate counter for LMDB entries
         global_image_counter = 1  # Global counter for image naming
         
         for split_name, split_size in splits.items():
@@ -1291,13 +1288,15 @@ class AurebeshDatasetGenerator:
             # Setup directories
             split_dir = ensure_dir(self.output_dir / split_name)
             images_dir = ensure_dir(split_dir / 'images')
-            lmdb_dir = ensure_dir(split_dir / 'lmdb')
             
-            # Setup LMDB
-            lmdb_env = lmdb.open(str(lmdb_dir), map_size=50 * 1024 * 1024 * 1024)  # 50GB
+            # Setup cropped images directory for recognizer
+            cropped_dir = ensure_dir(split_dir / 'cropped')
+            cropped_images_dir = ensure_dir(cropped_dir / 'images')
             
             # Annotations in new format
             annotations = {}
+            # Cropped images annotations for recognizer
+            cropped_annotations = {}
             
             generated_count = 0
             attempts = 0
@@ -1502,6 +1501,7 @@ class AurebeshDatasetGenerator:
                     # Prepare data for new labels format
                     polygons = []
                     texts = []
+                    crop_idx = 1  # Counter for cropped images per main image
                     
                     # Process each text instance
                     for ann in text_annotations:
@@ -1518,9 +1518,13 @@ class AurebeshDatasetGenerator:
                         
                         text_crop = image_aug.crop(bbox)
                         
-                        # Save to LMDB with unique index
-                        self._save_lmdb(text_crop, ann['text'], lmdb_env, global_lmdb_idx)
-                        global_lmdb_idx += 1
+                        # Save cropped image for recognizer
+                        crop_filename = self._save_cropped_image(
+                            text_crop, ann['text'], cropped_images_dir, 
+                            Path(image_name), crop_idx
+                        )
+                        cropped_annotations[crop_filename] = ann['text']
+                        crop_idx += 1
                         
                         # Add polygon and text to arrays
                         polygons.append(ann['polygon'])
@@ -1546,10 +1550,12 @@ class AurebeshDatasetGenerator:
             with open(labels_path, 'w') as f:
                 json.dump(annotations, f, indent=2)
             
-            # Close LMDB
-            lmdb_env.close()
+            # Save cropped annotations for recognizer
+            cropped_labels_path = cropped_dir / 'labels.json'
+            with open(cropped_labels_path, 'w') as f:
+                json.dump(cropped_annotations, f, indent=2)
             
-            self.logger.info(f"Completed {split_name} split")
+            self.logger.info(f"Completed {split_name} split with {len(cropped_annotations)} cropped images")
         
         self.logger.info("Dataset generation completed!")
 
