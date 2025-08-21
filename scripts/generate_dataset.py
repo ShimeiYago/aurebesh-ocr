@@ -1248,6 +1248,46 @@ class AurebeshDatasetGenerator:
         
         debug_img.save(output_path)
 
+    def _perspective_crop_polygon(self, image: Image.Image, polygon: List[List[int]]) -> Image.Image:
+        """Apply perspective transform to crop rotated polygon as upright rectangle."""
+        # Convert polygon to numpy array
+        polygon_np = np.array(polygon, dtype=np.float32)
+        
+        # Calculate the width and height of the output rectangle
+        # Use the distances between opposite corners to determine dimensions
+        width1 = np.linalg.norm(polygon_np[1] - polygon_np[0])
+        width2 = np.linalg.norm(polygon_np[2] - polygon_np[3])
+        height1 = np.linalg.norm(polygon_np[3] - polygon_np[0])
+        height2 = np.linalg.norm(polygon_np[2] - polygon_np[1])
+        
+        # Use maximum width and height to avoid cutting off text
+        max_width = int(max(width1, width2))
+        max_height = int(max(height1, height2))
+        
+        # Ensure minimum size
+        max_width = max(max_width, 20)
+        max_height = max(max_height, 20)
+        
+        # Define destination rectangle (upright)
+        dst_points = np.array([
+            [0, 0],
+            [max_width, 0],
+            [max_width, max_height],
+            [0, max_height]
+        ], dtype=np.float32)
+        
+        # Calculate perspective transformation matrix
+        transform_matrix = cv2.getPerspectiveTransform(polygon_np, dst_points)
+        
+        # Convert PIL image to numpy array
+        image_np = np.array(image)
+        
+        # Apply perspective transformation
+        warped = cv2.warpPerspective(image_np, transform_matrix, (max_width, max_height))
+        
+        # Convert back to PIL image
+        return Image.fromarray(warped)
+
     def _save_cropped_image(self, image: Image.Image, text: str, cropped_images_dir: Path, image_name: str, crop_idx: int) -> str:
         """Save cropped text image for recognizer."""
         # Create filename for cropped image
@@ -1505,18 +1545,34 @@ class AurebeshDatasetGenerator:
                     
                     # Process each text instance
                     for ann in text_annotations:
-                        # Crop text region for recognizer
+                        # Get polygon for perspective transform
+                        polygon = ann['polygon']
                         bbox = ann['bbox']
                         
-                        # Skip if bbox is outside image boundaries
-                        # Add safety margin to prevent text cutoff at boundaries
-                        safety_margin = 10
-                        if (bbox[0] < 0 or bbox[1] < 0 or 
-                            bbox[2] > self.resolution or bbox[3] > self.resolution):
-                            self.logger.debug(f"Skipping out-of-bounds text during crop: {ann['text']}")
+                        # Skip if polygon is outside image boundaries
+                        # Check all polygon points
+                        polygon_valid = True
+                        for point in polygon:
+                            if (point[0] < 0 or point[1] < 0 or 
+                                point[0] > self.resolution or point[1] > self.resolution):
+                                polygon_valid = False
+                                break
+                        
+                        if not polygon_valid:
+                            self.logger.debug(f"Skipping out-of-bounds polygon during crop: {ann['text']}")
                             continue
                         
-                        text_crop = image_aug.crop(bbox)
+                        # Apply perspective transformation to crop rotated text
+                        try:
+                            text_crop = self._perspective_crop_polygon(image_aug, polygon)
+                        except Exception as e:
+                            self.logger.debug(f"Failed to crop polygon for text '{ann['text']}': {e}")
+                            continue
+                        
+                        # Skip very small crops
+                        if text_crop.size[0] < 10 or text_crop.size[1] < 10:
+                            self.logger.debug(f"Skipping too small crop: {ann['text']}")
+                            continue
                         
                         # Save cropped image for recognizer
                         crop_filename = self._save_cropped_image(
