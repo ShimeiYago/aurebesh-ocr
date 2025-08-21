@@ -168,6 +168,11 @@ class AurebeshDatasetGenerator:
     def _generate_text(self) -> str:
         """Generate text using vocabulary or random characters."""
         text_config = self.config['style']['text']
+        
+        # 5% chance to generate empty text for robustness
+        if random.random() < 0.05:
+            return ""
+        
         num_words = random.randint(text_config['min_words'], text_config['max_words'])
         
         if self.word_list and random.random() < (1 - DEFAULT_RANDOM_TEXT_RATIO):  # 95% use vocabulary
@@ -859,23 +864,32 @@ class AurebeshDatasetGenerator:
             if variant_type == 'multiline':
                 # Split text into 2-3 lines
                 words = block_text.split()
-                num_lines = random.randint(2, 3)
-                
-                # Distribute words across lines
-                words_per_line = max(1, len(words) // num_lines)
-                lines = []
-                for i in range(num_lines):
-                    start_idx = i * words_per_line
-                    if i == num_lines - 1:
-                        # Last line gets all remaining words
-                        line_words = words[start_idx:]
-                    else:
-                        line_words = words[start_idx:start_idx + words_per_line]
-                    if line_words:
-                        lines.append(' '.join(line_words))
-                
-                # All lines use same font size
-                font_sizes = [font_size] * len(lines)
+                if not words:
+                    # Empty text - create empty lines
+                    lines = ["", ""]
+                    font_sizes = [font_size, font_size]
+                else:
+                    num_lines = random.randint(2, 3)
+                    
+                    # Distribute words across lines
+                    words_per_line = max(1, len(words) // num_lines)
+                    lines = []
+                    for i in range(num_lines):
+                        start_idx = i * words_per_line
+                        if i == num_lines - 1:
+                            # Last line gets all remaining words
+                            line_words = words[start_idx:]
+                        else:
+                            line_words = words[start_idx:start_idx + words_per_line]
+                        if line_words:
+                            lines.append(' '.join(line_words))
+                    
+                    # Ensure we have at least one line
+                    if not lines:
+                        lines = [block_text if block_text else ""]
+                    
+                    # All lines use same font size
+                    font_sizes = [font_size] * len(lines)
                 
             elif variant_type == 'size_contrast':
                 # Two lines with 2x size difference
@@ -886,14 +900,22 @@ class AurebeshDatasetGenerator:
                     lines = [' '.join(words[:mid]), ' '.join(words[mid:])]
                     # First line is 2x larger
                     font_sizes = [font_size, max(15, font_size // 2)]
-                else:
+                elif len(words) == 1:
                     # Single word - duplicate it
-                    lines = [words[0], words[0] if words else block_text]
+                    lines = [words[0], words[0]]
+                    font_sizes = [font_size, max(15, font_size // 2)]
+                else:
+                    # Empty text - use empty lines
+                    lines = ["", ""]
                     font_sizes = [font_size, max(15, font_size // 2)]
             else:
                 # Normal single line
                 lines = [block_text]
                 font_sizes = [font_size]
+            
+            # Skip text blocks with only empty lines
+            if all(not line.strip() for line in lines):
+                continue
             
             # Decide on rotation first to calculate accurate dimensions
             effects = self.config['style']['effects']
@@ -1261,6 +1283,7 @@ class AurebeshDatasetGenerator:
         
         global_idx = 0
         global_lmdb_idx = 0  # Separate counter for LMDB entries
+        global_image_counter = 1  # Global counter for image naming
         
         for split_name, split_size in splits.items():
             self.logger.info(f"Generating {split_name} split with {split_size} images")
@@ -1273,10 +1296,8 @@ class AurebeshDatasetGenerator:
             # Setup LMDB
             lmdb_env = lmdb.open(str(lmdb_dir), map_size=50 * 1024 * 1024 * 1024)  # 50GB
             
-            # Annotations in smart format
-            annotations = {
-                'images': []
-            }
+            # Annotations in new format
+            annotations = {}
             
             generated_count = 0
             attempts = 0
@@ -1286,6 +1307,44 @@ class AurebeshDatasetGenerator:
                 while generated_count < split_size and attempts < max_attempts:
                     # Generate text
                     text = self._generate_text()
+                    
+                    # Handle empty text case
+                    if not text.strip():
+                        # Generate background-only image for empty text
+                        bg = self._get_background((self.resolution, self.resolution))
+                        
+                        # Convert to RGB if needed
+                        if bg.mode == 'RGBA':
+                            rgb_image = Image.new('RGB', bg.size, (255, 255, 255))
+                            rgb_image.paste(bg, mask=bg.split()[3])
+                            image_aug = rgb_image
+                        else:
+                            image_aug = bg
+                        
+                        # Save detection image
+                        image_name = f"img_{global_image_counter:04d}.jpg"
+                        image_path = images_dir / image_name
+                        image_aug.save(image_path, 'JPEG', quality=95)
+                        
+                        # Save debug image (if debug mode enabled)
+                        if self.debug and generated_count < 20:
+                            debug_dir = ensure_dir(split_dir / 'debug')
+                            debug_name = f"img_{global_image_counter:04d}_debug.png"
+                            debug_path = debug_dir / debug_name
+                            self._save_debug_image(image_aug, [], debug_path)
+                        
+                        # Add empty annotation
+                        annotations[image_name] = {
+                            'polygons': [],
+                            'texts': [""]
+                        }
+                        
+                        generated_count += 1
+                        global_idx += 1
+                        global_image_counter += 1
+                        attempts += 1
+                        pbar.update(1)
+                        continue
                     
                     # Sample font
                     font_path = self._sample_font()
@@ -1423,22 +1482,26 @@ class AurebeshDatasetGenerator:
                     text_annotations = updated_annotations
                     
                     # Save detection image
-                    image_name = f"{split_name}_{generated_count:06d}.png"
+                    image_name = f"img_{global_image_counter:04d}.jpg"
                     image_path = images_dir / image_name
-                    image_aug.save(image_path)
+                    # Convert to RGB before saving as JPEG
+                    if image_aug.mode == 'RGBA':
+                        rgb_image = Image.new('RGB', image_aug.size, (255, 255, 255))
+                        rgb_image.paste(image_aug, mask=image_aug.split()[3])
+                        rgb_image.save(image_path, 'JPEG', quality=95)
+                    else:
+                        image_aug.save(image_path, 'JPEG', quality=95)
                     
                     # Save debug image with bboxes (if debug mode enabled)
                     if self.debug and generated_count < 20:  # Save debug for first 20 images
                         debug_dir = ensure_dir(split_dir / 'debug')
-                        debug_name = f"{split_name}_{generated_count:06d}_debug.png"
+                        debug_name = f"img_{global_image_counter:04d}_debug.png"
                         debug_path = debug_dir / debug_name
                         self._save_debug_image(image_aug, text_annotations, debug_path)
                     
-                    # Add to smart annotations format
-                    image_annotation = {
-                        'file_name': image_name,
-                        'annotations': []
-                    }
+                    # Prepare data for new labels format
+                    polygons = []
+                    texts = []
                     
                     # Process each text instance
                     for ann in text_annotations:
@@ -1459,27 +1522,28 @@ class AurebeshDatasetGenerator:
                         self._save_lmdb(text_crop, ann['text'], lmdb_env, global_lmdb_idx)
                         global_lmdb_idx += 1
                         
-                        # Add annotation in smart format
-                        text_annotation = {
-                            'text': ann['text'],
-                            'polygon': ann['polygon']
-                        }
-                        image_annotation['annotations'].append(text_annotation)
+                        # Add polygon and text to arrays
+                        polygons.append(ann['polygon'])
+                        texts.append(ann['text'])
                     
                     # Only add image if it has annotations
-                    if image_annotation['annotations']:
-                        annotations['images'].append(image_annotation)
+                    if polygons:
+                        annotations[image_name] = {
+                            'polygons': polygons,
+                            'texts': texts
+                        }
                     
                     generated_count += 1
                     global_idx += 1
+                    global_image_counter += 1
                     pbar.update(1)
                 
                 if generated_count < split_size:
                     self.logger.warning(f"Could only generate {generated_count}/{split_size} images after {attempts} attempts")
             
-            # Save annotations
-            ann_path = split_dir / 'annotations.json'
-            with open(ann_path, 'w') as f:
+            # Save annotations as labels.json
+            labels_path = split_dir / 'labels.json'
+            with open(labels_path, 'w') as f:
                 json.dump(annotations, f, indent=2)
             
             # Close LMDB
