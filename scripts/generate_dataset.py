@@ -14,7 +14,8 @@ from utils import setup_logger, ensure_dir, load_config, get_charset, STAR_WARS_
 
 # Default configuration
 DEFAULT_WORDFREQ_LIMIT = 10000  # Top N words from wordfreq to use
-DEFAULT_RANDOM_TEXT_RATIO = 0.05  # 5% random text for robustness, 95% vocabulary text
+DEFAULT_RANDOM_TEXT_RATIO = 0.05  # 5% random text for robustness
+DEFAULT_NUMERIC_TEXT_RATIO = 0.15  # 15% numeric/mixed content for number recognition
 
 
 class AurebeshDatasetGenerator:
@@ -173,11 +174,18 @@ class AurebeshDatasetGenerator:
         
         num_words = random.randint(text_config['min_words'], text_config['max_words'])
         
-        if self.word_list and random.random() < (1 - DEFAULT_RANDOM_TEXT_RATIO):  # 95% use vocabulary
-            # Use words from vocabulary
+        # New probability distribution for better number coverage
+        rand_val = random.random()
+        
+        if rand_val < (1 - DEFAULT_RANDOM_TEXT_RATIO - DEFAULT_NUMERIC_TEXT_RATIO):  # 80% vocabulary
+            # Use words from vocabulary (mostly alphabetic)
             words = random.choices(self.word_list, k=num_words)
             return ' '.join(words)
-        else:
+        elif rand_val < (1 - DEFAULT_RANDOM_TEXT_RATIO):  # 15% numeric/mixed content
+            # Generate numeric-heavy or mixed content
+            return self._generate_numeric_mixed_text(num_words, text_config)
+        else:  # 5% pure random
+            # Pure random characters
             words = []
             for _ in range(num_words):
                 word_len = random.randint(
@@ -190,6 +198,63 @@ class AurebeshDatasetGenerator:
                 words.append(word)
             
             return ' '.join(words)
+    
+    def _generate_numeric_mixed_text(self, num_words: int, text_config: dict) -> str:
+        """Generate text with emphasis on numbers and realistic numeric patterns."""
+        words = []
+        digits = [c for c in self.charset if c.isdigit()]
+        letters = [c for c in self.charset if c.isalpha()]
+        
+        for _ in range(num_words):
+            word_len = random.randint(
+                text_config['min_word_length'], 
+                text_config['max_word_length']
+            )
+            
+            # Different numeric patterns
+            pattern_choice = random.random()
+            
+            if pattern_choice < 0.4:  # 40% pure numbers
+                # Pure numeric sequences (years, codes, etc.)
+                word = ''.join(random.choices(digits, k=word_len))
+            elif pattern_choice < 0.7:  # 30% alphanumeric (like ROOM101, R2D2)
+                if word_len >= 3:
+                    # Letter prefix + number suffix
+                    letter_len = random.randint(1, word_len - 2)
+                    number_len = word_len - letter_len
+                    letter_part = ''.join(random.choices(letters, k=letter_len))
+                    number_part = ''.join(random.choices(digits, k=number_len))
+                    word = letter_part + number_part
+                else:
+                    word = ''.join(random.choices(digits, k=word_len))
+            elif pattern_choice < 0.85:  # 15% number prefix + letters
+                if word_len >= 3:
+                    # Number prefix + letter suffix  
+                    number_len = random.randint(1, word_len - 2)
+                    letter_len = word_len - number_len
+                    number_part = ''.join(random.choices(digits, k=number_len))
+                    letter_part = ''.join(random.choices(letters, k=letter_len))
+                    word = number_part + letter_part
+                else:
+                    word = ''.join(random.choices(digits, k=word_len))
+            else:  # 15% mixed with contractions
+                if "'" in self.charset and word_len >= 4:
+                    # Create realistic patterns like "DON'T" but with numbers "20'S", "90'S"
+                    if random.random() < 0.3:  # Number + 'S pattern
+                        number_part = ''.join(random.choices(digits, k=word_len - 2))
+                        word = number_part + "'S"
+                    else:  # Regular contraction-like
+                        part1_len = random.randint(1, word_len - 3)
+                        part2_len = word_len - part1_len - 1
+                        part1 = ''.join(random.choices(letters, k=part1_len))
+                        part2 = ''.join(random.choices(letters, k=part2_len))
+                        word = f"{part1}'{part2}"
+                else:
+                    word = ''.join(random.choices(digits, k=word_len))
+            
+            words.append(word)
+        
+        return ' '.join(words)
     
     def _generate_text_with_alphabet_mix(self) -> Tuple[str, List[bool]]:
         """Generate text with mixed Aurebesh and alphabet characters.
