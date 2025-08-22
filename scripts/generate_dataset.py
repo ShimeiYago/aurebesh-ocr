@@ -182,14 +182,14 @@ class AurebeshDatasetGenerator:
         # New probability distribution for better number coverage
         rand_val = random.random()
         
-        if rand_val < (1 - DEFAULT_RANDOM_TEXT_RATIO - DEFAULT_NUMERIC_TEXT_RATIO):  # 80% vocabulary
+        if rand_val < (1 - self.random_text_ratio - self.numeric_text_ratio):  # ~80% vocabulary
             # Use words from vocabulary (mostly alphabetic)
             words = random.choices(self.word_list, k=num_words)
             return ' '.join(words)
-        elif rand_val < (1 - DEFAULT_RANDOM_TEXT_RATIO):  # 15% numeric/mixed content
+        elif rand_val < (1 - self.random_text_ratio):  # ~15% numeric/mixed content
             # Generate numeric-heavy or mixed content
             return self._generate_numeric_mixed_text(num_words, text_config)
-        else:  # 5% pure random
+        else:  # ~5% pure random
             # Pure random characters
             words = []
             for _ in range(num_words):
@@ -286,7 +286,7 @@ class AurebeshDatasetGenerator:
                 is_alphabet_list.append(True)
             else:
                 # Generate Aurebesh word
-                if self.word_list and random.random() < (1 - DEFAULT_RANDOM_TEXT_RATIO):
+                if self.word_list and random.random() < (1 - self.random_text_ratio):
                     # Use vocabulary
                     word = random.choice(self.word_list)
                 else:
