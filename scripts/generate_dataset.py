@@ -184,8 +184,8 @@ class AurebeshDatasetGenerator:
                     text_config['min_word_length'], 
                     text_config['max_word_length']
                 )
-                # Use only letters from charset (no spaces or numbers for individual words)
-                available_chars = [c for c in self.charset if c.isalpha()]
+                # Use all characters from charset for mixed content
+                available_chars = list(self.charset)
                 word = ''.join(random.choices(available_chars, k=word_len))
                 words.append(word)
             
@@ -225,7 +225,7 @@ class AurebeshDatasetGenerator:
                         text_config['min_word_length'], 
                         text_config['max_word_length']
                     )
-                    available_chars = [c for c in self.charset if c.isalpha()]
+                    available_chars = list(self.charset)
                     word = ''.join(random.choices(available_chars, k=word_len))
                 words.append(word)
                 is_alphabet_list.append(False)
