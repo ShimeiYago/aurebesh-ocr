@@ -5,6 +5,7 @@ text_generation:
   wordfreq_limit: 10000          # Top N words from wordfreq to use
   random_text_ratio: 0.05        # 5% random text for robustness
   numeric_text_ratio: 0.15       # 15% numeric/mixed content for number recognition
+  alphabet_mix_prob: 0.0         # 0% chance to include English alphabets without annotation mixed with Aurebesh
   # Remaining: 80% vocabulary text (wordfreq + Star Wars)
 
 style:

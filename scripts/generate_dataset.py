@@ -12,11 +12,8 @@ from wordfreq import top_n_list
 
 from utils import setup_logger, ensure_dir, load_config, get_charset, STAR_WARS_VOCABULARY
 
-# Default configuration - now loaded from config file
-# These values are fallbacks if not found in config
+
 DEFAULT_WORDFREQ_LIMIT = 10000
-DEFAULT_RANDOM_TEXT_RATIO = 0.05
-DEFAULT_NUMERIC_TEXT_RATIO = 0.15
 
 
 class AurebeshDatasetGenerator:
@@ -47,8 +44,9 @@ class AurebeshDatasetGenerator:
         # Load text generation settings from config
         text_gen_config = self.config.get('text_generation', {})
         self.actual_wordfreq_limit = text_gen_config.get('wordfreq_limit', DEFAULT_WORDFREQ_LIMIT)
-        self.random_text_ratio = text_gen_config.get('random_text_ratio', DEFAULT_RANDOM_TEXT_RATIO)
-        self.numeric_text_ratio = text_gen_config.get('numeric_text_ratio', DEFAULT_NUMERIC_TEXT_RATIO)
+        self.random_text_ratio = text_gen_config.get('random_text_ratio', 0.05)
+        self.numeric_text_ratio = text_gen_config.get('numeric_text_ratio', 0.15)
+        self.alphabet_mix_prob = text_gen_config.get('alphabet_mix_prob', 0.1)  # 10% default
         
         # Override wordfreq_limit if provided via constructor
         if wordfreq_limit != DEFAULT_WORDFREQ_LIMIT:
@@ -71,9 +69,6 @@ class AurebeshDatasetGenerator:
         
         # Setup augmentations
         self.augmentations = self._setup_augmentations()
-        
-        # Probability of mixing alphabets with aurebesh
-        self.alphabet_mix_prob = 0.1  # 10% chance to include alphabets
         
     def _load_fonts(self) -> Dict[str, List[Path]]:
         """Load fonts from assets/fonts directory."""
