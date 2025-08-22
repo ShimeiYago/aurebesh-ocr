@@ -138,16 +138,42 @@ class AurebeshDatasetGenerator:
         """Setup word vocabulary from wordfreq and custom words."""
         vocabulary = []
         wordfreq_loaded_words = []
+        
+        # Create charset set once for filtering both wordfreq and custom words
+        charset_set = set(self.charset)
 
         if self.use_wordfreq:
             # Get top words in English using config value
             wordfreq_loaded_words = top_n_list('en', self.actual_wordfreq_limit)
             wordfreq_loaded_words = [word.upper() for word in wordfreq_loaded_words]
+            
+            # Filter wordfreq words to only include those with characters in our charset
+            original_count = len(wordfreq_loaded_words)
+            wordfreq_loaded_words = [
+                word for word in wordfreq_loaded_words 
+                if all(char in charset_set for char in word)
+            ]
+            filtered_count = original_count - len(wordfreq_loaded_words)
+            
+            if filtered_count > 0:
+                self.logger.info(f"Filtered out {filtered_count} wordfreq words containing invalid characters")
+                self.logger.info(f"Remaining wordfreq words: {len(wordfreq_loaded_words)}")
 
         # Add custom words (Star Wars themed)
         if custom_words is None:
             custom_words = STAR_WARS_VOCABULARY
         custom_words = [word.upper() for word in custom_words if word.isalpha()]
+        
+        # Filter custom words for consistency (reuse charset_set from above)
+        original_custom_count = len(custom_words)
+        custom_words = [
+            word for word in custom_words 
+            if all(char in charset_set for char in word)
+        ]
+        filtered_custom_count = original_custom_count - len(custom_words)
+        
+        if filtered_custom_count > 0:
+            self.logger.info(f"Filtered out {filtered_custom_count} custom words containing invalid characters")
 
         # Merge with vocabulary
         vocabulary = wordfreq_loaded_words + custom_words
