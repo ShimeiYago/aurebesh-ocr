@@ -12,10 +12,11 @@ from wordfreq import top_n_list
 
 from utils import setup_logger, ensure_dir, load_config, get_charset, STAR_WARS_VOCABULARY
 
-# Default configuration
-DEFAULT_WORDFREQ_LIMIT = 10000  # Top N words from wordfreq to use
-DEFAULT_RANDOM_TEXT_RATIO = 0.05  # 5% random text for robustness
-DEFAULT_NUMERIC_TEXT_RATIO = 0.15  # 15% numeric/mixed content for number recognition
+# Default configuration - now loaded from config file
+# These values are fallbacks if not found in config
+DEFAULT_WORDFREQ_LIMIT = 10000
+DEFAULT_RANDOM_TEXT_RATIO = 0.05
+DEFAULT_NUMERIC_TEXT_RATIO = 0.15
 
 
 class AurebeshDatasetGenerator:
@@ -36,13 +37,22 @@ class AurebeshDatasetGenerator:
         self.resolution = resolution
         self.split_ratio = split_ratio
         self.use_wordfreq = use_wordfreq
-        self.wordfreq_limit = wordfreq_limit
         self.debug = debug
         
         # Load configuration
         if config_path is None:
             config_path = Path(__file__).parent.parent / "configs" / "dataset.yaml"
         self.config = load_config(config_path)
+        
+        # Load text generation settings from config
+        text_gen_config = self.config.get('text_generation', {})
+        self.actual_wordfreq_limit = text_gen_config.get('wordfreq_limit', DEFAULT_WORDFREQ_LIMIT)
+        self.random_text_ratio = text_gen_config.get('random_text_ratio', DEFAULT_RANDOM_TEXT_RATIO)
+        self.numeric_text_ratio = text_gen_config.get('numeric_text_ratio', DEFAULT_NUMERIC_TEXT_RATIO)
+        
+        # Override wordfreq_limit if provided via constructor
+        if wordfreq_limit != DEFAULT_WORDFREQ_LIMIT:
+            self.actual_wordfreq_limit = wordfreq_limit
         
         # Setup paths
         self.font_dir = Path(__file__).parent.parent / "assets" / "fonts"
@@ -135,8 +145,8 @@ class AurebeshDatasetGenerator:
         wordfreq_loaded_words = []
 
         if self.use_wordfreq:
-            # Get top words in English
-            wordfreq_loaded_words = top_n_list('en', self.wordfreq_limit)
+            # Get top words in English using config value
+            wordfreq_loaded_words = top_n_list('en', self.actual_wordfreq_limit)
             wordfreq_loaded_words = [word.upper() for word in wordfreq_loaded_words]
 
         # Add custom words (Star Wars themed)

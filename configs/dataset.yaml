@@ -1,4 +1,12 @@
 # SynthTIGER configuration fragment for Aurebesh dataset generation
+
+# Text generation distribution
+text_generation:
+  wordfreq_limit: 10000          # Top N words from wordfreq to use
+  random_text_ratio: 0.05        # 5% random text for robustness
+  numeric_text_ratio: 0.15       # 15% numeric/mixed content for number recognition
+  # Remaining: 80% vocabulary text (wordfreq + Star Wars)
+
 style:
   font:
     # Font sampling probabilities
