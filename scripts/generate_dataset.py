@@ -199,8 +199,8 @@ class AurebeshDatasetGenerator:
         """Generate text using vocabulary or random characters."""
         text_config = self.config['style']['text']
         
-        # 5% chance to generate empty text for robustness
-        if random.random() < 0.05:
+        # 1% chance to generate empty text for robustness
+        if random.random() < 0.01:
             return ""
         
         num_words = random.randint(text_config['min_words'], text_config['max_words'])
