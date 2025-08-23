@@ -360,6 +360,27 @@ class AurebeshDatasetGenerator:
                     return False
         return True
     
+    def _check_word_overlap(self, new_bbox: List[int], existing_annotations: List[dict], min_gap: int = 5) -> bool:
+        """Check if a word bounding box overlaps with existing word annotations.
+        
+        Args:
+            new_bbox: [x1, y1, x2, y2] of the new word
+            existing_annotations: List of existing word annotations with 'bbox' field
+            min_gap: Minimum gap in pixels between words
+            
+        Returns:
+            True if there is an overlap, False otherwise
+        """
+        for existing in existing_annotations:
+            exist_bbox = existing['bbox']
+            # Check if boxes overlap with min_gap spacing
+            if (new_bbox[0] - min_gap < exist_bbox[2] and 
+                new_bbox[2] + min_gap > exist_bbox[0] and
+                new_bbox[1] - min_gap < exist_bbox[3] and 
+                new_bbox[3] + min_gap > exist_bbox[1]):
+                return True
+        return False
+    
     def _get_background(self, size: Tuple[int, int]) -> Image.Image:
         """Get background image or generate synthetic one."""
         if random.random() < self.config['style']['color']['synthetic_bg_prob']:
@@ -1166,72 +1187,88 @@ class AurebeshDatasetGenerator:
                             # Calculate paste position for this word
                             rot_w, rot_h = rotated_word.size
                             
-                            # For simplicity, we'll place each word at the same base position
-                            # In a real implementation, you might want to calculate word spacing
-                            paste_x = x + int(placement_width - rot_w) // 2
-                            paste_y = y + int(placement_height - rot_h) // 2
+                            # Try to find a non-overlapping position for this word
+                            max_word_attempts = 50
+                            word_placed = False
                             
-                            # Final boundary check
-                            if (paste_x < 0 or paste_y < 0 or 
-                                paste_x + rot_w > image_size[0] or 
-                                paste_y + rot_h > image_size[1]):
+                            for word_attempt in range(max_word_attempts):
+                                if word_attempt == 0:
+                                    # First attempt: use center position
+                                    paste_x = x + int(placement_width - rot_w) // 2
+                                    paste_y = y + int(placement_height - rot_h) // 2
+                                else:
+                                    # Subsequent attempts: random position within the block area
+                                    paste_x = x + random.randint(0, max(0, placement_width - rot_w))
+                                    paste_y = y + random.randint(0, max(0, placement_height - rot_h))
+                                
+                                # Final boundary check
+                                if (paste_x < 0 or paste_y < 0 or 
+                                    paste_x + rot_w > image_size[0] or 
+                                    paste_y + rot_h > image_size[1]):
+                                    continue  # Try another position
+                                
+                                # Calculate the actual bounding box for overlap check
+                                # First, find the actual bounds by analyzing the rotated image
+                                rot_array = np.array(rotated_word)
+                                alpha_channel = rot_array[:, :, 3]
+                                y_indices, x_indices = np.where(alpha_channel > 0)
+                                
+                                if len(x_indices) > 0 and len(y_indices) > 0:
+                                    # Calculate actual word bounds
+                                    actual_x1 = paste_x + np.min(x_indices)
+                                    actual_y1 = paste_y + np.min(y_indices)
+                                    actual_x2 = paste_x + np.max(x_indices) + 1
+                                    actual_y2 = paste_y + np.max(y_indices) + 1
+                                    
+                                    # Check for overlap with existing words
+                                    temp_bbox = [actual_x1, actual_y1, actual_x2, actual_y2]
+                                    # Check overlap with both global annotations and current block's words
+                                    combined_annotations = annotations + word_annotations
+                                    if not self._check_word_overlap(temp_bbox, combined_annotations):
+                                        # No overlap, we can place the word here
+                                        word_placed = True
+                                        break
+                            
+                            if not word_placed:
+                                self.logger.debug(f"Could not find non-overlapping position for word: {word}")
                                 continue  # Skip this word
                             
                             # Paste rotated word onto background
                             bg.paste(rotated_word, (paste_x, paste_y), rotated_word)
                             
-                            # Find actual non-transparent pixels for this word
-                            rot_array = np.array(rotated_word)
-                            alpha_channel = rot_array[:, :, 3]
+                            # Calculate rotated polygon for this word
+                            text_center_x = temp_size[0] / 2
+                            text_center_y = temp_size[1] / 2
                             
-                            # Find bounds of non-transparent pixels
-                            y_indices, x_indices = np.where(alpha_channel > 0)
+                            corners = [
+                                (padding - text_center_x, padding - text_center_y),
+                                (padding + word_width - text_center_x, padding - text_center_y),
+                                (padding + word_width - text_center_x, padding + word_height - text_center_y),
+                                (padding - text_center_x, padding + word_height - text_center_y)
+                            ]
                             
-                            if len(x_indices) > 0 and len(y_indices) > 0:
-                                # Calculate actual word bounds
-                                actual_x1 = paste_x + np.min(x_indices)
-                                actual_y1 = paste_y + np.min(y_indices)
-                                actual_x2 = paste_x + np.max(x_indices) + 1
-                                actual_y2 = paste_y + np.max(y_indices) + 1
+                            # Rotate corners
+                            angle_rad = np.radians(angle)
+                            cos_a = np.cos(angle_rad)
+                            sin_a = np.sin(angle_rad)
+                            
+                            rotated_corners = []
+                            for cx, cy in corners:
+                                rx = cx * cos_a - cy * sin_a
+                                ry = cx * sin_a + cy * cos_a
                                 
-                                # Skip if outside bounds
-                                if (actual_x1 < 0 or actual_y1 < 0 or 
-                                    actual_x2 > image_size[0] or actual_y2 > image_size[1]):
-                                    continue
+                                final_x = paste_x + rot_w / 2 + rx
+                                final_y = paste_y + rot_h / 2 + ry
                                 
-                                # Calculate rotated polygon for this word
-                                text_center_x = temp_size[0] / 2
-                                text_center_y = temp_size[1] / 2
-                                
-                                corners = [
-                                    (padding - text_center_x, padding - text_center_y),
-                                    (padding + word_width - text_center_x, padding - text_center_y),
-                                    (padding + word_width - text_center_x, padding + word_height - text_center_y),
-                                    (padding - text_center_x, padding + word_height - text_center_y)
-                                ]
-                                
-                                # Rotate corners
-                                angle_rad = np.radians(angle)
-                                cos_a = np.cos(angle_rad)
-                                sin_a = np.sin(angle_rad)
-                                
-                                rotated_corners = []
-                                for cx, cy in corners:
-                                    rx = cx * cos_a - cy * sin_a
-                                    ry = cx * sin_a + cy * cos_a
-                                    
-                                    final_x = paste_x + rot_w / 2 + rx
-                                    final_y = paste_y + rot_h / 2 + ry
-                                    
-                                    rotated_corners.append([int(final_x), int(final_y)])
-                                
-                                # Create annotation for this word
-                                word_annotation = {
-                                    'text': word,
-                                    'bbox': [actual_x1, actual_y1, actual_x2, actual_y2],
-                                    'polygon': rotated_corners
-                                }
-                                word_annotations.append(word_annotation)
+                                rotated_corners.append([int(final_x), int(final_y)])
+                            
+                            # Create annotation for this word
+                            word_annotation = {
+                                'text': word,
+                                'bbox': [actual_x1, actual_y1, actual_x2, actual_y2],
+                                'polygon': rotated_corners
+                            }
+                            word_annotations.append(word_annotation)
                 
                 # Add all word annotations
                 annotations.extend(word_annotations)
