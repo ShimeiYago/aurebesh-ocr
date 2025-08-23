@@ -1505,7 +1505,7 @@ class AurebeshDatasetGenerator:
                         # Add empty annotation
                         annotations[image_name] = {
                             'polygons': [],
-                            'texts': [""]
+                            'texts': []
                         }
                         
                         generated_count += 1
