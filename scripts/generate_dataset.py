@@ -1525,9 +1525,40 @@ class AurebeshDatasetGenerator:
                     
                     attempts += 1
                     
-                    # Skip images with no text annotations
+                    # Handle images with no text annotations (e.g., failed rendering)
                     if not text_annotations:
-                        self.logger.warning(f"No text placed on image attempt {attempts}, retrying...")
+                        self.logger.debug(f"No text placed on image attempt {attempts}, saving as background-only image")
+                        
+                        # Convert to RGB if needed
+                        if image.mode == 'RGBA':
+                            rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                            rgb_image.paste(image, mask=image.split()[3])
+                            image_aug = rgb_image
+                        else:
+                            image_aug = image
+                        
+                        # Save detection image
+                        image_name = f"img_{global_image_counter:04d}.jpg"
+                        image_path = images_dir / image_name
+                        image_aug.save(image_path, 'JPEG', quality=95)
+                        
+                        # Save debug image (if debug mode enabled)
+                        if self.debug and generated_count < 20:
+                            debug_dir = ensure_dir(split_dir / 'debug')
+                            debug_name = f"img_{global_image_counter:04d}_debug.png"
+                            debug_path = debug_dir / debug_name
+                            self._save_debug_image(image_aug, [], debug_path)
+                        
+                        # Add empty annotation
+                        annotations[image_name] = {
+                            'polygons': [],
+                            'texts': []
+                        }
+                        
+                        generated_count += 1
+                        global_idx += 1
+                        global_image_counter += 1
+                        pbar.update(1)
                         continue
                     
                     # Apply augmentations with bbox transformation
@@ -1716,12 +1747,11 @@ class AurebeshDatasetGenerator:
                         polygons.append(ann['polygon'])
                         texts.append(ann['text'])
                     
-                    # Only add image if it has annotations
-                    if polygons:
-                        annotations[image_name] = {
-                            'polygons': polygons,
-                            'texts': texts
-                        }
+                    # Add annotation (either with content or empty)
+                    annotations[image_name] = {
+                        'polygons': polygons,
+                        'texts': texts
+                    }
                     
                     generated_count += 1
                     global_idx += 1
