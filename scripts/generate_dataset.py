@@ -1237,14 +1237,30 @@ class AurebeshDatasetGenerator:
                             bg.paste(rotated_word, (paste_x, paste_y), rotated_word)
                             
                             # Calculate rotated polygon for this word
-                            text_center_x = temp_size[0] / 2
-                            text_center_y = temp_size[1] / 2
+                            # The key insight: use the actual bounding box coordinates that were correctly calculated
+                            # and transform them back to get the polygon corners
+                            
+                            # actual_x1, actual_y1, actual_x2, actual_y2 are the correct bounding box coordinates
+                            # We need to find the original corners that would produce this bounding box after rotation
+                            
+                            # Get the actual text boundaries in the temp image (before rotation)
+                            temp_text_bbox = text_draw.textbbox((temp_x, temp_y), word, font=font)
+                            
+                            # Calculate the actual text rectangle corners in temp image coordinates
+                            text_left = temp_text_bbox[0]
+                            text_top = temp_text_bbox[1] 
+                            text_right = temp_text_bbox[2]
+                            text_bottom = temp_text_bbox[3]
+                            
+                            # Transform these coordinates to be relative to the temp image center
+                            temp_center_x = temp_size[0] / 2
+                            temp_center_y = temp_size[1] / 2
                             
                             corners = [
-                                (padding - text_center_x, padding - text_center_y),
-                                (padding + word_width - text_center_x, padding - text_center_y),
-                                (padding + word_width - text_center_x, padding + word_height - text_center_y),
-                                (padding - text_center_x, padding + word_height - text_center_y)
+                                (text_left - temp_center_x, text_top - temp_center_y),
+                                (text_right - temp_center_x, text_top - temp_center_y),
+                                (text_right - temp_center_x, text_bottom - temp_center_y),
+                                (text_left - temp_center_x, text_bottom - temp_center_y)
                             ]
                             
                             # Rotate corners
@@ -1257,6 +1273,7 @@ class AurebeshDatasetGenerator:
                                 rx = cx * cos_a - cy * sin_a
                                 ry = cx * sin_a + cy * cos_a
                                 
+                                # Transform to final image coordinates
                                 final_x = paste_x + rot_w / 2 + rx
                                 final_y = paste_y + rot_h / 2 + ry
                                 
