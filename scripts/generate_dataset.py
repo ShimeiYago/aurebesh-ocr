@@ -1,6 +1,12 @@
 import argparse
 import json
 import random
+import math
+import multiprocessing
+import os
+import shutil
+import tempfile
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import numpy as np
@@ -8,6 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 import cv2
 import albumentations as A
 from tqdm import tqdm
+from tqdm.contrib.concurrent import process_map
 from wordfreq import top_n_list
 
 from utils import setup_logger, ensure_dir, load_config, get_charset, STAR_WARS_VOCABULARY
@@ -1488,9 +1495,508 @@ class AurebeshDatasetGenerator:
         
         return crop_filename
     
+    def _generate_worker_images(self, task_config: Dict) -> Dict:
+        """Worker function to generate images for a single process."""
+        split_name = task_config['split_name']
+        num_images = task_config['num_images']
+        worker_id = task_config['worker_id']
+        temp_dir = task_config['temp_dir']
+        start_counter = task_config['start_counter']
+        padding_format = task_config['padding_format']
+        
+        # Setup worker-specific directories
+        worker_temp_dir = Path(temp_dir) / f"worker_{worker_id}"
+        images_dir = ensure_dir(worker_temp_dir / 'images')
+        cropped_dir = ensure_dir(worker_temp_dir / 'cropped')
+        cropped_images_dir = ensure_dir(cropped_dir / 'images')
+        
+        # Setup worker-specific logger
+        worker_logger = setup_logger(
+            f"generate_dataset_worker_{worker_id}", 
+            worker_temp_dir / 'logs'
+        )
+        
+        # Initialize results
+        annotations = {}
+        cropped_annotations = {}
+        
+        worker_logger.info(f"Worker {worker_id} starting generation of {num_images} images for {split_name}")
+        
+        generated_count = 0
+        attempts = 0
+        max_attempts = num_images * 2
+        image_counter = start_counter
+        
+        while generated_count < num_images and attempts < max_attempts:
+            try:
+                # Generate text
+                text = self._generate_text()
+                
+                # Handle empty text case
+                if not text.strip():
+                    # Generate background-only image for empty text
+                    bg = self._get_background((self.resolution, self.resolution))
+                    
+                    # Convert to RGB if needed
+                    if bg.mode == 'RGBA':
+                        rgb_image = Image.new('RGB', bg.size, (255, 255, 255))
+                        rgb_image.paste(bg, mask=bg.split()[3])
+                        image_aug = rgb_image
+                    else:
+                        image_aug = bg
+                    
+                    # Save detection image
+                    image_name = f"img_{padding_format.format(image_counter)}.jpg"
+                    image_path = images_dir / image_name
+                    image_aug.save(image_path, 'JPEG', quality=95)
+                    
+                    # Save debug image (if debug mode enabled)
+                    if self.debug and generated_count < 5:  # Reduced debug images per worker
+                        debug_dir = ensure_dir(worker_temp_dir / 'debug')
+                        debug_name = f"img_{padding_format.format(image_counter)}_debug.png"
+                        debug_path = debug_dir / debug_name
+                        self._save_debug_image(image_aug, [], debug_path)
+                    
+                    # Add empty annotation
+                    annotations[image_name] = {
+                        'polygons': [],
+                        'texts': []
+                    }
+                    
+                    generated_count += 1
+                    image_counter += 1
+                    attempts += 1
+                    continue
+                
+                # Sample font
+                font_path = self._sample_font()
+                
+                # Render text on image
+                image, text_annotations = self._render_text_on_image(
+                    text, font_path, (self.resolution, self.resolution)
+                )
+                
+                attempts += 1
+                
+                # Handle images with no text annotations
+                if not text_annotations:
+                    worker_logger.debug(f"No text placed on image attempt {attempts}, saving as background-only image")
+                    
+                    # Convert to RGB if needed
+                    if image.mode == 'RGBA':
+                        rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                        rgb_image.paste(image, mask=image.split()[3])
+                        image_aug = rgb_image
+                    else:
+                        image_aug = image
+                    
+                    # Save detection image
+                    image_name = f"img_{padding_format.format(image_counter)}.jpg"
+                    image_path = images_dir / image_name
+                    image_aug.save(image_path, 'JPEG', quality=95)
+                    
+                    # Save debug image (if debug mode enabled)
+                    if self.debug and generated_count < 5:
+                        debug_dir = ensure_dir(worker_temp_dir / 'debug')
+                        debug_name = f"img_{padding_format.format(image_counter)}_debug.png"
+                        debug_path = debug_dir / debug_name
+                        self._save_debug_image(image_aug, [], debug_path)
+                    
+                    # Add empty annotation
+                    annotations[image_name] = {
+                        'polygons': [],
+                        'texts': []
+                    }
+                    
+                    generated_count += 1
+                    image_counter += 1
+                    continue
+                
+                # Apply augmentations (same logic as original)
+                image_np = np.array(image)
+                
+                # Process annotations for augmentation
+                bboxes = []
+                labels = []
+                keypoints = []
+                valid_annotations = []
+                
+                for ann in text_annotations:
+                    bbox = ann['bbox']
+                    
+                    # Skip degenerate bboxes
+                    if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
+                        worker_logger.warning(f"Skipping degenerate bbox: {bbox}")
+                        continue
+                    
+                    # Skip very small bboxes
+                    min_size = 5
+                    if (bbox[2] - bbox[0] < min_size) or (bbox[3] - bbox[1] < min_size):
+                        worker_logger.warning(f"Skipping too small bbox: {bbox}")
+                        continue
+                    
+                    bboxes.append([bbox[0], bbox[1], bbox[2], bbox[3]])
+                    labels.append(len(valid_annotations))
+                    
+                    # Store polygon corners as keypoints
+                    polygon_kps = []
+                    for point in ann['polygon']:
+                        polygon_kps.extend([point[0], point[1], 1])
+                    keypoints.append(polygon_kps)
+                    
+                    valid_annotations.append(ann)
+                
+                # Skip if no valid bboxes remain
+                if not bboxes:
+                    worker_logger.warning("No valid bboxes after filtering, retrying...")
+                    continue
+                
+                # Setup keypoint params for albumentations
+                keypoint_params = A.KeypointParams(format='xy', remove_invisible=False)
+                
+                # Create augmentation pipeline
+                aug_with_keypoints = A.Compose(
+                    self.augmentations.transforms,
+                    bbox_params=A.BboxParams(
+                        format='pascal_voc',
+                        label_fields=['labels'],
+                        min_visibility=0.3
+                    ),
+                    keypoint_params=keypoint_params
+                )
+                
+                # Flatten keypoints for albumentations
+                flat_keypoints = []
+                for kps in keypoints:
+                    for i in range(0, len(kps), 3):
+                        flat_keypoints.append((kps[i], kps[i+1]))
+                
+                # Apply augmentations
+                augmented = aug_with_keypoints(
+                    image=image_np,
+                    bboxes=bboxes,
+                    labels=labels,
+                    keypoints=flat_keypoints
+                )
+                
+                image_aug = Image.fromarray(augmented['image'])
+                augmented_bboxes = augmented['bboxes']
+                augmented_labels = augmented['labels']
+                augmented_keypoints = augmented['keypoints']
+                
+                # Reconstruct polygons from augmented keypoints
+                keypoint_idx = 0
+                augmented_polygons = []
+                for _ in range(len(valid_annotations)):
+                    polygon = []
+                    for _ in range(4):
+                        if keypoint_idx < len(augmented_keypoints):
+                            kp = augmented_keypoints[keypoint_idx]
+                            polygon.append([int(kp[0]), int(kp[1])])
+                            keypoint_idx += 1
+                    augmented_polygons.append(polygon)
+                
+                # Update annotations with transformed data
+                updated_annotations = []
+                for bbox, label, polygon in zip(augmented_bboxes, augmented_labels, augmented_polygons):
+                    label_idx = int(label)
+                    orig_ann = valid_annotations[label_idx]
+                    
+                    # Convert bbox coordinates to integers
+                    x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+                    
+                    # Skip if bbox is outside image boundaries
+                    safety_margin = 10
+                    if (x1 < 0 or y1 < 0 or x2 > self.resolution or y2 > self.resolution or
+                        x2 <= x1 or y2 <= y1 or
+                        x1 < safety_margin or y1 < safety_margin or 
+                        x2 > self.resolution - safety_margin or y2 > self.resolution - safety_margin):
+                        continue
+                    
+                    # Update annotation
+                    updated_ann = orig_ann.copy()
+                    updated_ann['bbox'] = [x1, y1, x2, y2]
+                    updated_ann['polygon'] = polygon
+                    
+                    updated_annotations.append(updated_ann)
+                
+                # Use updated annotations
+                text_annotations = updated_annotations
+                
+                # Save detection image
+                image_name = f"img_{padding_format.format(image_counter)}.jpg"
+                image_path = images_dir / image_name
+                # Convert to RGB before saving as JPEG
+                if image_aug.mode == 'RGBA':
+                    rgb_image = Image.new('RGB', image_aug.size, (255, 255, 255))
+                    rgb_image.paste(image_aug, mask=image_aug.split()[3])
+                    rgb_image.save(image_path, 'JPEG', quality=95)
+                else:
+                    image_aug.save(image_path, 'JPEG', quality=95)
+                
+                # Save debug image (if debug mode enabled)
+                if self.debug and generated_count < 5:
+                    debug_dir = ensure_dir(worker_temp_dir / 'debug')
+                    debug_name = f"img_{padding_format.format(image_counter)}_debug.png"
+                    debug_path = debug_dir / debug_name
+                    self._save_debug_image(image_aug, text_annotations, debug_path)
+                
+                # Process cropped images
+                polygons = []
+                texts = []
+                crop_idx = 1
+                
+                for ann in text_annotations:
+                    polygon = ann['polygon']
+                    
+                    # Skip if polygon is outside image boundaries
+                    polygon_valid = True
+                    for point in polygon:
+                        if (point[0] < 0 or point[1] < 0 or 
+                            point[0] > self.resolution or point[1] > self.resolution):
+                            polygon_valid = False
+                            break
+                    
+                    if not polygon_valid:
+                        worker_logger.debug(f"Skipping out-of-bounds polygon during crop: {ann['text']}")
+                        continue
+                    
+                    # Apply perspective transformation to crop rotated text
+                    try:
+                        text_crop = self._perspective_crop_polygon(image_aug, polygon)
+                    except Exception as e:
+                        worker_logger.debug(f"Failed to crop polygon for text '{ann['text']}': {e}")
+                        continue
+                    
+                    # Skip very small crops
+                    if text_crop.size[0] < 10 or text_crop.size[1] < 10:
+                        worker_logger.debug(f"Skipping too small crop: {ann['text']}")
+                        continue
+                    
+                    # Save cropped image
+                    crop_filename = self._save_cropped_image(
+                        text_crop, ann['text'], cropped_images_dir, 
+                        Path(image_name), crop_idx
+                    )
+                    cropped_annotations[crop_filename] = ann['text']
+                    crop_idx += 1
+                    
+                    # Add polygon and text to arrays
+                    polygons.append(ann['polygon'])
+                    texts.append(ann['text'])
+                
+                # Add annotation
+                annotations[image_name] = {
+                    'polygons': polygons,
+                    'texts': texts
+                }
+                
+                generated_count += 1
+                image_counter += 1
+                
+            except Exception as e:
+                worker_logger.error(f"Error in worker {worker_id}: {e}")
+                raise  # Re-raise for fail-fast behavior
+        
+        if generated_count < num_images:
+            worker_logger.warning(f"Worker {worker_id} could only generate {generated_count}/{num_images} images after {attempts} attempts")
+        
+        worker_logger.info(f"Worker {worker_id} completed with {generated_count} images and {len(cropped_annotations)} cropped images")
+        
+        return {
+            'worker_id': worker_id,
+            'generated_count': generated_count,
+            'annotations': annotations,
+            'cropped_annotations': cropped_annotations,
+            'temp_dir': worker_temp_dir
+        }
+    
+    def _merge_worker_results(self, split_name: str, worker_results: List[Dict], final_output_dir: Path):
+        """Merge results from all workers into final output directory."""
+        self.logger.info(f"Merging results from {len(worker_results)} workers for {split_name}")
+        
+        # Setup final directories
+        split_dir = ensure_dir(final_output_dir / split_name)
+        final_images_dir = ensure_dir(split_dir / 'images')
+        final_cropped_dir = ensure_dir(split_dir / 'cropped')
+        final_cropped_images_dir = ensure_dir(final_cropped_dir / 'images')
+        
+        # Merge annotations
+        merged_annotations = {}
+        merged_cropped_annotations = {}
+        
+        # Copy files and merge annotations
+        for result in worker_results:
+            worker_temp_dir = result['temp_dir']
+            
+            # Copy main images
+            worker_images_dir = worker_temp_dir / 'images'
+            if worker_images_dir.exists():
+                for image_file in worker_images_dir.glob('*.jpg'):
+                    shutil.copy2(image_file, final_images_dir / image_file.name)
+            
+            # Copy cropped images
+            worker_cropped_images_dir = worker_temp_dir / 'cropped' / 'images'
+            if worker_cropped_images_dir.exists():
+                for crop_file in worker_cropped_images_dir.glob('*.jpg'):
+                    shutil.copy2(crop_file, final_cropped_images_dir / crop_file.name)
+            
+            # Copy debug images if they exist
+            worker_debug_dir = worker_temp_dir / 'debug'
+            if worker_debug_dir.exists() and self.debug:
+                final_debug_dir = ensure_dir(split_dir / 'debug')
+                for debug_file in worker_debug_dir.glob('*.png'):
+                    shutil.copy2(debug_file, final_debug_dir / debug_file.name)
+            
+            # Merge annotations
+            merged_annotations.update(result['annotations'])
+            merged_cropped_annotations.update(result['cropped_annotations'])
+        
+        # Save merged annotations
+        labels_path = split_dir / 'labels.json'
+        with open(labels_path, 'w') as f:
+            json.dump(merged_annotations, f, indent=2)
+        
+        cropped_labels_path = final_cropped_dir / 'labels.json'
+        with open(cropped_labels_path, 'w') as f:
+            json.dump(merged_cropped_annotations, f, indent=2)
+        
+        self.logger.info(f"Merged {len(merged_annotations)} images and {len(merged_cropped_annotations)} cropped images for {split_name}")
+        
+        return len(merged_annotations), len(merged_cropped_annotations)
+    
+    def _cleanup_temp_directories(self, temp_base_dir: Path):
+        """Clean up temporary directories."""
+        try:
+            if temp_base_dir.exists():
+                shutil.rmtree(temp_base_dir)
+                self.logger.info(f"Cleaned up temporary directory: {temp_base_dir}")
+        except Exception as e:
+            self.logger.warning(f"Failed to clean up temporary directory {temp_base_dir}: {e}")
+    
     def generate(self):
-        """Generate complete dataset."""
-        self.logger.info(f"Starting dataset generation with {self.num_images} images")
+        """Generate complete dataset using multiprocessing."""
+        self.logger.info(f"Starting parallel dataset generation with {self.num_images} images")
+        
+        # Determine number of processes to use
+        if hasattr(self, '_max_workers') and self._max_workers:
+            max_workers = min(self._max_workers, multiprocessing.cpu_count())
+        else:
+            max_workers = min(multiprocessing.cpu_count(), 8)  # Cap at 8 processes for memory safety
+        self.logger.info(f"Using {max_workers} worker processes")
+        
+        # Calculate split sizes
+        train_size = int(self.num_images * self.split_ratio[0])
+        val_size = int(self.num_images * self.split_ratio[1])
+        test_size = self.num_images - train_size - val_size
+        
+        splits = {
+            'train': train_size,
+            'val': val_size,
+            'test': test_size
+        }
+        
+        # Calculate padding format for consistent image naming
+        padding_digits = len(str(self.num_images))
+        padding_format = f"{{:0{padding_digits}d}}"
+        
+        # Create temporary base directory
+        temp_base_dir = Path(tempfile.mkdtemp(prefix="aurebesh_dataset_"))
+        self.logger.info(f"Using temporary directory: {temp_base_dir}")
+        
+        global_image_counter = 1
+        
+        try:
+            for split_name, split_size in splits.items():
+                if split_size == 0:
+                    self.logger.info(f"Skipping {split_name} split (size = 0)")
+                    continue
+                
+                self.logger.info(f"Generating {split_name} split with {split_size} images using {max_workers} processes")
+                
+                # Calculate work distribution
+                images_per_worker = split_size // max_workers
+                remaining_images = split_size % max_workers
+                
+                # Create tasks for workers
+                tasks = []
+                current_counter = global_image_counter
+                
+                for worker_id in range(max_workers):
+                    # Give extra images to first few workers if there's remainder
+                    worker_images = images_per_worker + (1 if worker_id < remaining_images else 0)
+                    
+                    if worker_images == 0:
+                        continue  # Skip workers with no work
+                    
+                    task_config = {
+                        'split_name': split_name,
+                        'num_images': worker_images,
+                        'worker_id': worker_id,
+                        'temp_dir': str(temp_base_dir / split_name),
+                        'start_counter': current_counter,
+                        'padding_format': padding_format
+                    }
+                    tasks.append(task_config)
+                    current_counter += worker_images
+                
+                if not tasks:
+                    self.logger.warning(f"No tasks created for {split_name} split")
+                    continue
+                
+                # Execute tasks in parallel with progress tracking
+                self.logger.info(f"Starting {len(tasks)} workers for {split_name}")
+                
+                try:
+                    # Use ProcessPoolExecutor for better error handling
+                    with ProcessPoolExecutor(max_workers=len(tasks)) as executor:
+                        # Submit all tasks
+                        futures = []
+                        for task in tasks:
+                            future = executor.submit(self._generate_worker_images, task)
+                            futures.append(future)
+                        
+                        # Collect results with progress tracking
+                        worker_results = []
+                        completed = 0
+                        
+                        with tqdm(total=len(futures), desc=f"Workers for {split_name}") as pbar:
+                            for future in futures:
+                                try:
+                                    result = future.result()  # This will raise exception if worker failed
+                                    worker_results.append(result)
+                                    completed += 1
+                                    pbar.update(1)
+                                    self.logger.debug(f"Worker {result['worker_id']} completed: {result['generated_count']} images")
+                                except Exception as e:
+                                    self.logger.error(f"Worker failed with error: {e}")
+                                    # Cleanup and re-raise for fail-fast behavior
+                                    self._cleanup_temp_directories(temp_base_dir)
+                                    raise
+                
+                except Exception as e:
+                    self.logger.error(f"Parallel execution failed for {split_name}: {e}")
+                    raise
+                
+                # Merge results from all workers
+                total_images, total_cropped = self._merge_worker_results(
+                    split_name, worker_results, self.output_dir
+                )
+                
+                self.logger.info(f"Completed {split_name} split: {total_images} images, {total_cropped} cropped images")
+                
+                # Update global counter for next split
+                global_image_counter = current_counter
+        
+        finally:
+            # Always cleanup temporary directories
+            self._cleanup_temp_directories(temp_base_dir)
+        
+        self.logger.info("Parallel dataset generation completed successfully!")
+    
+    def generate_sequential(self):
+        """Generate complete dataset sequentially (original implementation)."""
+        self.logger.info(f"Starting sequential dataset generation with {self.num_images} images")
         
         # Calculate split sizes
         train_size = int(self.num_images * self.split_ratio[0])
@@ -1846,6 +2352,7 @@ def main():
     parser.add_argument("--wordfreq_limit", type=int, default=DEFAULT_WORDFREQ_LIMIT, help="Number of wordfreq words to use")
     parser.add_argument("--custom_words", nargs="+", help="Additional custom words to add")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode with bbox visualization")
+    parser.add_argument("--max_workers", type=int, default=None, help="Enable parallel processing with specified number of worker processes")
     
     args = parser.parse_args()
     
@@ -1861,7 +2368,13 @@ def main():
         debug=args.debug
     )
     
-    generator.generate()
+    if args.max_workers:
+        print(f"Using parallel processing with {args.max_workers} workers...")
+        generator._max_workers = args.max_workers
+        generator.generate()
+    else:
+        print("Using sequential processing (default). Use --max_workers N to enable parallel processing...")
+        generator.generate_sequential()
 
 
 if __name__ == "__main__":
