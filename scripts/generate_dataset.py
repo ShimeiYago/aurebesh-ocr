@@ -1506,6 +1506,10 @@ class AurebeshDatasetGenerator:
         global_idx = 0
         global_image_counter = 1  # Global counter for image naming
         
+        # Calculate the number of digits needed for padding based on total images
+        padding_digits = len(str(self.num_images))
+        padding_format = f"{{:0{padding_digits}d}}"
+        
         for split_name, split_size in splits.items():
             self.logger.info(f"Generating {split_name} split with {split_size} images")
             
@@ -1545,14 +1549,14 @@ class AurebeshDatasetGenerator:
                             image_aug = bg
                         
                         # Save detection image
-                        image_name = f"img_{global_image_counter:04d}.jpg"
+                        image_name = f"img_{padding_format.format(global_image_counter)}.jpg"
                         image_path = images_dir / image_name
                         image_aug.save(image_path, 'JPEG', quality=95)
                         
                         # Save debug image (if debug mode enabled)
                         if self.debug and generated_count < 20:
                             debug_dir = ensure_dir(split_dir / 'debug')
-                            debug_name = f"img_{global_image_counter:04d}_debug.png"
+                            debug_name = f"img_{padding_format.format(global_image_counter)}_debug.png"
                             debug_path = debug_dir / debug_name
                             self._save_debug_image(image_aug, [], debug_path)
                         
@@ -1592,14 +1596,14 @@ class AurebeshDatasetGenerator:
                             image_aug = image
                         
                         # Save detection image
-                        image_name = f"img_{global_image_counter:04d}.jpg"
+                        image_name = f"img_{padding_format.format(global_image_counter)}.jpg"
                         image_path = images_dir / image_name
                         image_aug.save(image_path, 'JPEG', quality=95)
                         
                         # Save debug image (if debug mode enabled)
                         if self.debug and generated_count < 20:
                             debug_dir = ensure_dir(split_dir / 'debug')
-                            debug_name = f"img_{global_image_counter:04d}_debug.png"
+                            debug_name = f"img_{padding_format.format(global_image_counter)}_debug.png"
                             debug_path = debug_dir / debug_name
                             self._save_debug_image(image_aug, [], debug_path)
                         
@@ -1736,7 +1740,7 @@ class AurebeshDatasetGenerator:
                     text_annotations = updated_annotations
                     
                     # Save detection image
-                    image_name = f"img_{global_image_counter:04d}.jpg"
+                    image_name = f"img_{padding_format.format(global_image_counter)}.jpg"
                     image_path = images_dir / image_name
                     # Convert to RGB before saving as JPEG
                     if image_aug.mode == 'RGBA':
