@@ -203,10 +203,6 @@ class AurebeshDatasetGenerator:
         """Generate text using vocabulary or random characters."""
         text_config = self.config['style']['text']
         
-        # 1% chance to generate empty text for robustness
-        if random.random() < 0.01:
-            return ""
-        
         num_words = random.randint(text_config['min_words'], text_config['max_words'])
         
         # New probability distribution for better number coverage
@@ -1529,40 +1525,10 @@ class AurebeshDatasetGenerator:
                 # Generate text
                 text = self._generate_text()
                 
-                # Handle empty text case
+                # Skip empty text and retry
                 if not text.strip():
-                    # Generate background-only image for empty text
-                    bg = self._get_background((self.resolution, self.resolution))
-                    
-                    # Convert to RGB if needed
-                    if bg.mode == 'RGBA':
-                        rgb_image = Image.new('RGB', bg.size, (255, 255, 255))
-                        rgb_image.paste(bg, mask=bg.split()[3])
-                        image_aug = rgb_image
-                    else:
-                        image_aug = bg
-                    
-                    # Save detection image
-                    image_name = f"img_{padding_format.format(image_counter)}.jpg"
-                    image_path = images_dir / image_name
-                    image_aug.save(image_path, 'JPEG', quality=95)
-                    
-                    # Save debug image (if debug mode enabled)
-                    if self.debug and generated_count < 5:  # Reduced debug images per worker
-                        debug_dir = ensure_dir(worker_temp_dir / 'debug')
-                        debug_name = f"img_{padding_format.format(image_counter)}_debug.png"
-                        debug_path = debug_dir / debug_name
-                        self._save_debug_image(image_aug, [], debug_path)
-                    
-                    # Add empty annotation
-                    annotations[image_name] = {
-                        'polygons': [],
-                        'texts': []
-                    }
-                    
-                    generated_count += 1
-                    image_counter += 1
                     attempts += 1
+                    worker_logger.debug(f"Generated empty text, retrying...")
                     continue
                 
                 # Sample font
@@ -1575,38 +1541,9 @@ class AurebeshDatasetGenerator:
                 
                 attempts += 1
                 
-                # Handle images with no text annotations
+                # Handle images with no text annotations - retry instead of saving empty
                 if not text_annotations:
-                    worker_logger.debug(f"No text placed on image attempt {attempts}, saving as background-only image")
-                    
-                    # Convert to RGB if needed
-                    if image.mode == 'RGBA':
-                        rgb_image = Image.new('RGB', image.size, (255, 255, 255))
-                        rgb_image.paste(image, mask=image.split()[3])
-                        image_aug = rgb_image
-                    else:
-                        image_aug = image
-                    
-                    # Save detection image
-                    image_name = f"img_{padding_format.format(image_counter)}.jpg"
-                    image_path = images_dir / image_name
-                    image_aug.save(image_path, 'JPEG', quality=95)
-                    
-                    # Save debug image (if debug mode enabled)
-                    if self.debug and generated_count < 5:
-                        debug_dir = ensure_dir(worker_temp_dir / 'debug')
-                        debug_name = f"img_{padding_format.format(image_counter)}_debug.png"
-                        debug_path = debug_dir / debug_name
-                        self._save_debug_image(image_aug, [], debug_path)
-                    
-                    # Add empty annotation
-                    annotations[image_name] = {
-                        'polygons': [],
-                        'texts': []
-                    }
-                    
-                    generated_count += 1
-                    image_counter += 1
+                    worker_logger.debug(f"No text placed on image attempt {attempts}, retrying...")
                     continue
                 
                 # Apply augmentations (same logic as original)
@@ -1720,6 +1657,11 @@ class AurebeshDatasetGenerator:
                 # Use updated annotations
                 text_annotations = updated_annotations
                 
+                # Check if augmentation removed all annotations - retry if so
+                if not text_annotations:
+                    worker_logger.debug(f"All annotations lost after augmentation, retrying...")
+                    continue
+                
                 # Save detection image
                 image_name = f"img_{padding_format.format(image_counter)}.jpg"
                 image_path = images_dir / image_name
@@ -1781,6 +1723,11 @@ class AurebeshDatasetGenerator:
                     # Add polygon and text to arrays
                     polygons.append(ann['polygon'])
                     texts.append(ann['text'])
+                
+                # Final check: ensure we have valid annotations before saving
+                if not polygons or not texts:
+                    worker_logger.debug(f"No valid annotations after crop processing, retrying...")
+                    continue
                 
                 # Add annotation
                 annotations[image_name] = {
@@ -2038,42 +1985,10 @@ class AurebeshDatasetGenerator:
                     # Generate text
                     text = self._generate_text()
                     
-                    # Handle empty text case
+                    # Handle empty text case - retry instead of saving empty
                     if not text.strip():
-                        # Generate background-only image for empty text
-                        bg = self._get_background((self.resolution, self.resolution))
-                        
-                        # Convert to RGB if needed
-                        if bg.mode == 'RGBA':
-                            rgb_image = Image.new('RGB', bg.size, (255, 255, 255))
-                            rgb_image.paste(bg, mask=bg.split()[3])
-                            image_aug = rgb_image
-                        else:
-                            image_aug = bg
-                        
-                        # Save detection image
-                        image_name = f"img_{padding_format.format(global_image_counter)}.jpg"
-                        image_path = images_dir / image_name
-                        image_aug.save(image_path, 'JPEG', quality=95)
-                        
-                        # Save debug image (if debug mode enabled)
-                        if self.debug and generated_count < 20:
-                            debug_dir = ensure_dir(split_dir / 'debug')
-                            debug_name = f"img_{padding_format.format(global_image_counter)}_debug.png"
-                            debug_path = debug_dir / debug_name
-                            self._save_debug_image(image_aug, [], debug_path)
-                        
-                        # Add empty annotation
-                        annotations[image_name] = {
-                            'polygons': [],
-                            'texts': []
-                        }
-                        
-                        generated_count += 1
-                        global_idx += 1
-                        global_image_counter += 1
                         attempts += 1
-                        pbar.update(1)
+                        self.logger.debug(f"Generated empty text, retrying...")
                         continue
                     
                     # Sample font
@@ -2086,40 +2001,9 @@ class AurebeshDatasetGenerator:
                     
                     attempts += 1
                     
-                    # Handle images with no text annotations (e.g., failed rendering)
+                    # Handle images with no text annotations - retry instead of saving empty
                     if not text_annotations:
-                        self.logger.debug(f"No text placed on image attempt {attempts}, saving as background-only image")
-                        
-                        # Convert to RGB if needed
-                        if image.mode == 'RGBA':
-                            rgb_image = Image.new('RGB', image.size, (255, 255, 255))
-                            rgb_image.paste(image, mask=image.split()[3])
-                            image_aug = rgb_image
-                        else:
-                            image_aug = image
-                        
-                        # Save detection image
-                        image_name = f"img_{padding_format.format(global_image_counter)}.jpg"
-                        image_path = images_dir / image_name
-                        image_aug.save(image_path, 'JPEG', quality=95)
-                        
-                        # Save debug image (if debug mode enabled)
-                        if self.debug and generated_count < 20:
-                            debug_dir = ensure_dir(split_dir / 'debug')
-                            debug_name = f"img_{padding_format.format(global_image_counter)}_debug.png"
-                            debug_path = debug_dir / debug_name
-                            self._save_debug_image(image_aug, [], debug_path)
-                        
-                        # Add empty annotation
-                        annotations[image_name] = {
-                            'polygons': [],
-                            'texts': []
-                        }
-                        
-                        generated_count += 1
-                        global_idx += 1
-                        global_image_counter += 1
-                        pbar.update(1)
+                        self.logger.debug(f"No text placed on image attempt {attempts}, retrying...")
                         continue
                     
                     # Apply augmentations with bbox transformation
@@ -2242,6 +2126,11 @@ class AurebeshDatasetGenerator:
                     # Use updated annotations for saving
                     text_annotations = updated_annotations
                     
+                    # Check if augmentation removed all annotations - retry if so
+                    if not text_annotations:
+                        self.logger.debug(f"All annotations lost after augmentation, retrying...")
+                        continue
+                    
                     # Save detection image
                     image_name = f"img_{padding_format.format(global_image_counter)}.jpg"
                     image_path = images_dir / image_name
@@ -2308,7 +2197,12 @@ class AurebeshDatasetGenerator:
                         polygons.append(ann['polygon'])
                         texts.append(ann['text'])
                     
-                    # Add annotation (either with content or empty)
+                    # Final check: ensure we have valid annotations before saving
+                    if not polygons or not texts:
+                        self.logger.debug(f"No valid annotations after crop processing, retrying...")
+                        continue
+                    
+                    # Add annotation with valid content
                     annotations[image_name] = {
                         'polygons': polygons,
                         'texts': texts
