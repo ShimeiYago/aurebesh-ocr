@@ -48,6 +48,7 @@ def record_lr(
     end_lr: float = 1,
     num_it: int = 100,
     amp: bool = False,
+    device=None,
 ):
     """Gridsearch the optimal learning rate for the training.
     Adapted from https://github.com/frgfm/Holocron/blob/master/holocron/trainer/core.py
@@ -71,14 +72,16 @@ def record_lr(
         scaler = torch.cuda.amp.GradScaler()
 
     for batch_idx, (images, targets) in enumerate(train_loader):
-        if torch.cuda.is_available():
-            images = images.cuda()
+        if device is not None and device.type != "cpu":
+            images = images.to(device)
 
         images = batch_transforms(images)
 
         # Forward, Backward & update
         optimizer.zero_grad()
-        if amp:
+        # Note: AMP with MPS is not supported, only use with CUDA
+        use_amp = amp and device is not None and device.type == "cuda"
+        if use_amp:
             with torch.cuda.amp.autocast():
                 train_loss = model(images, targets)["loss"]
             scaler.scale(train_loss).backward()
@@ -110,8 +113,10 @@ def record_lr(
     return lr_recorder[: len(loss_recorder)], loss_recorder
 
 
-def fit_one_epoch(model, train_loader, batch_transforms, optimizer, scheduler, amp=False, log=None, rank=0):
-    if amp:
+def fit_one_epoch(model, train_loader, batch_transforms, optimizer, scheduler, amp=False, log=None, rank=0, device=None):
+    # Note: AMP with MPS is not supported, only use with CUDA
+    use_amp = amp and device is not None and device.type == "cuda"
+    if use_amp:
         scaler = torch.cuda.amp.GradScaler()
 
     model.train()
@@ -119,12 +124,12 @@ def fit_one_epoch(model, train_loader, batch_transforms, optimizer, scheduler, a
     epoch_train_loss, batch_cnt = 0, 0
     pbar = tqdm(train_loader, dynamic_ncols=True, disable=(rank != 0))
     for images, targets in pbar:
-        if torch.cuda.is_available():
-            images = images.cuda()
+        if device is not None and device.type != "cpu":
+            images = images.to(device)
         images = batch_transforms(images)
 
         optimizer.zero_grad()
-        if amp:
+        if use_amp:
             with torch.cuda.amp.autocast():
                 train_loss = model(images, targets)["loss"]
             scaler.scale(train_loss).backward()
@@ -155,7 +160,10 @@ def fit_one_epoch(model, train_loader, batch_transforms, optimizer, scheduler, a
 
 
 @torch.no_grad()
-def evaluate(model, val_loader, batch_transforms, val_metric, args, amp=False, log=None):
+def evaluate(model, val_loader, batch_transforms, val_metric, args, amp=False, log=None, device=None):
+    # Note: AMP with MPS is not supported, only use with CUDA
+    use_amp = amp and device is not None and device.type == "cuda"
+    
     # Model in eval mode
     model.eval()
     # Reset val metric
@@ -164,10 +172,10 @@ def evaluate(model, val_loader, batch_transforms, val_metric, args, amp=False, l
     val_loss, batch_cnt = 0, 0
     pbar = tqdm(val_loader, dynamic_ncols=True)
     for images, targets in pbar:
-        if torch.cuda.is_available():
-            images = images.cuda()
+        if device is not None and device.type != "cpu":
+            images = images.to(device)
         images = batch_transforms(images)
-        if amp:
+        if use_amp:
             with torch.cuda.amp.autocast():
                 out = model(images, targets, return_preds=True)
         else:
@@ -218,6 +226,9 @@ def main(args):
         # Silent default switch to GPU if available
         elif torch.cuda.is_available():
             device = torch.device("cuda", 0)
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps")
+            logging.info("Using MPS (Metal Performance Shaders) device for GPU acceleration on macOS.")
         else:
             logging.warning("No accessible GPU, target device set to CPU.")
             device = torch.device("cpu")
@@ -270,7 +281,7 @@ def main(args):
             drop_last=False,
             num_workers=args.workers,
             sampler=SequentialSampler(val_set),
-            pin_memory=torch.cuda.is_available(),
+            pin_memory=torch.cuda.is_available() or torch.backends.mps.is_available(),
             collate_fn=val_set.collate_fn,
         )
         pbar.write(
@@ -307,7 +318,7 @@ def main(args):
     if rank == 0 and args.test_only:
         pbar.write("Running evaluation")
         val_loss, recall, precision, mean_iou = evaluate(
-            model, val_loader, batch_transforms, val_metric, args, amp=args.amp
+            model, val_loader, batch_transforms, val_metric, args, amp=args.amp, device=device
         )
         pbar.write(
             f"Validation loss: {val_loss:.6} (Recall: {recall:.2%} | Precision: {precision:.2%} | "
@@ -378,7 +389,7 @@ def main(args):
         drop_last=True,
         num_workers=args.workers,
         sampler=sampler,
-        pin_memory=torch.cuda.is_available(),
+        pin_memory=torch.cuda.is_available() or torch.backends.mps.is_available(),
         collate_fn=train_set.collate_fn,
     )
     if rank == 0:
@@ -399,8 +410,7 @@ def main(args):
         for p in model.feat_extractor.parameters():
             p.requires_grad = False
 
-    if torch.cuda.is_available():
-        torch.cuda.set_device(device)
+    if torch.cuda.is_available() or torch.backends.mps.is_available():
         model = model.to(device)
 
     if distributed:
@@ -426,7 +436,7 @@ def main(args):
 
     # LR Finder
     if rank == 0 and args.find_lr:
-        lrs, losses = record_lr(model, train_loader, batch_transforms, optimizer, amp=args.amp)
+        lrs, losses = record_lr(model, train_loader, batch_transforms, optimizer, amp=args.amp, device=device)
         plot_recorder(lrs, losses)
         return
 
@@ -524,14 +534,14 @@ def main(args):
     # Training loop
     for epoch in range(args.epochs):
         train_loss, actual_lr = fit_one_epoch(
-            model, train_loader, batch_transforms, optimizer, scheduler, amp=args.amp, log=log_at_step, rank=rank
+            model, train_loader, batch_transforms, optimizer, scheduler, amp=args.amp, log=log_at_step, rank=rank, device=device
         )
         if rank == 0:
             pbar.write(f"Epoch {epoch + 1}/{args.epochs} - Training loss: {train_loss:.6} | LR: {actual_lr:.6}")
 
             # Validation loop at the end of each epoch
             val_loss, recall, precision, mean_iou = evaluate(
-                model, val_loader, batch_transforms, val_metric, args, amp=args.amp, log=log_at_step
+                model, val_loader, batch_transforms, val_metric, args, amp=args.amp, log=log_at_step, device=device
             )
             params = model.module if hasattr(model, "module") else model
             if val_loss < min_loss:
