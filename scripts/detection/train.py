@@ -34,6 +34,11 @@ from doctr.utils.metrics import LocalizationConfusion
 from utils import EarlyStopper, plot_recorder, plot_samples
 
 
+def identity_transform(x):
+    """Identity transformation - returns input unchanged"""
+    return x
+
+
 def record_lr(
     model: torch.nn.Module,
     train_loader: DataLoader,
@@ -325,7 +330,7 @@ def main(args):
             RandomGrayscale(p=0.15),
         ]),
         RandomPhotometricDistort(p=0.3),
-        lambda x: x,  # Identity no transformation
+        identity_transform,  # Identity no transformation
     ])
     # Image + target augmentations
     sample_transforms = T.SampleCompose(
