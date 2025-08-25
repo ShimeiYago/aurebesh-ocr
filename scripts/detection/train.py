@@ -452,6 +452,10 @@ def main(args):
     current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     exp_name = f"{args.arch}_{current_time}" if args.name is None else args.name
 
+    # Create output directory if it doesn't exist
+    if rank == 0:
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+
     if rank == 0:
         config = {
             "learning_rate": args.lr,
