@@ -3,7 +3,6 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from rich.logging import RichHandler
-from torch.utils.tensorboard import SummaryWriter
 from typing import Optional
 
 
@@ -11,7 +10,6 @@ def setup_logger(
     name: str,
     log_dir: Optional[Path] = None,
     level: int = logging.INFO,
-    use_tensorboard: bool = False
 ) -> logging.Logger:
     """Set up logger with Rich formatting and optional TensorBoard."""
     logger = logging.getLogger(name)
@@ -44,12 +42,7 @@ def setup_logger(
         )
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-    
-    # TensorBoard writer
-    if use_tensorboard and log_dir:
-        writer = SummaryWriter(log_dir / f"tensorboard_{timestamp}")
-        logger.tensorboard_writer = writer
-    
+        
     return logger
 
 

@@ -5,6 +5,7 @@ data/real/
 data/synth/
 outputs/
 .python-version
+.vscode/
 
 # Keep gitkeep files
 !.gitkeep

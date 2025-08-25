@@ -1,9 +1,7 @@
 import argparse
 import json
 import random
-import math
 import multiprocessing
-import os
 import shutil
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
@@ -14,7 +12,6 @@ from PIL import Image, ImageDraw, ImageFont
 import cv2
 import albumentations as A
 from tqdm import tqdm
-from tqdm.contrib.concurrent import process_map
 from wordfreq import top_n_list
 
 from utils import setup_logger, ensure_dir, load_config, get_charset, STAR_WARS_VOCABULARY
