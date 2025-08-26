@@ -477,6 +477,12 @@ def main(args):
     global global_step
     global_step = 0  # Shared global step counter
 
+    # TensorBoard
+    tb_writer = None
+    if rank == 0:
+        from torch.utils.tensorboard import SummaryWriter
+        tb_writer = SummaryWriter(log_dir=str(Path(args.output_dir) / "tensorboard"))
+
     # W&B
     if args.wb:
         import wandb
@@ -522,12 +528,19 @@ def main(args):
                 )
 
     # Unified logger
-    def log_at_step(train_loss=None, val_loss=None, lr=None):
+    def log_at_step(train_loss=None, val_loss=None, lr=None, tb_writer=None):
         global global_step
         if args.wb:
             wandb_log_at_step(train_loss, val_loss, lr)
         if args.clearml:
             clearml_log_at_step(train_loss, val_loss, lr)
+        if tb_writer is not None:
+            if train_loss is not None:
+                tb_writer.add_scalar("train_loss_step", train_loss, global_step)
+            if val_loss is not None:
+                tb_writer.add_scalar("val_loss_step", val_loss, global_step)
+            if lr is not None:
+                tb_writer.add_scalar("step_lr", lr, global_step)
         global_step += 1  # Increment the shared global step counter
 
     # Create loss queue
@@ -536,16 +549,17 @@ def main(args):
         early_stopper = EarlyStopper(patience=args.early_stop_epochs, min_delta=args.early_stop_delta)
 
     # Training loop
+
     for epoch in range(args.epochs):
         train_loss, actual_lr = fit_one_epoch(
-            model, train_loader, batch_transforms, optimizer, scheduler, amp=args.amp, log=log_at_step, rank=rank, device=device
+            model, train_loader, batch_transforms, optimizer, scheduler, amp=args.amp, log=lambda train_loss=None, val_loss=None, lr=None: log_at_step(train_loss, val_loss, lr, tb_writer), rank=rank, device=device
         )
         if rank == 0:
             pbar.write(f"Epoch {epoch + 1}/{args.epochs} - Training loss: {train_loss:.6} | LR: {actual_lr:.6}")
 
             # Validation loop at the end of each epoch
             val_loss, recall, precision, mean_iou = evaluate(
-                model, val_loader, batch_transforms, val_metric, args, amp=args.amp, log=log_at_step, device=device
+                model, val_loader, batch_transforms, val_metric, args, amp=args.amp, log=lambda train_loss=None, val_loss=None, lr=None: log_at_step(train_loss, val_loss, lr, tb_writer), device=device
             )
             params = model.module if hasattr(model, "module") else model
             if val_loss < min_loss:
@@ -562,6 +576,19 @@ def main(args):
             else:
                 log_msg += f"(Recall: {recall:.2%} | Precision: {precision:.2%} | Mean IoU: {mean_iou:.2%})"
             pbar.write(log_msg)
+
+            # TensorBoard epoch logging
+            if tb_writer is not None:
+                tb_writer.add_scalar("train_loss", train_loss, epoch)
+                tb_writer.add_scalar("val_loss", val_loss, epoch)
+                tb_writer.add_scalar("learning_rate", actual_lr, epoch)
+                if recall is not None:
+                    tb_writer.add_scalar("recall", recall, epoch)
+                if precision is not None:
+                    tb_writer.add_scalar("precision", precision, epoch)
+                if mean_iou is not None:
+                    tb_writer.add_scalar("mean_iou", mean_iou, epoch)
+
             # W&B
             if args.wb:
                 wandb.log({
