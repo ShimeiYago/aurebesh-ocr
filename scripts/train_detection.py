@@ -281,7 +281,7 @@ def main(args):
             drop_last=False,
             num_workers=args.workers,
             sampler=SequentialSampler(val_set),
-            pin_memory=torch.cuda.is_available() or torch.backends.mps.is_available(),
+            pin_memory=torch.cuda.is_available(),
             collate_fn=val_set.collate_fn,
         )
         pbar.write(
@@ -389,7 +389,7 @@ def main(args):
         drop_last=True,
         num_workers=args.workers,
         sampler=sampler,
-        pin_memory=torch.cuda.is_available() or torch.backends.mps.is_available(),
+        pin_memory=torch.cuda.is_available(),
         collate_fn=train_set.collate_fn,
     )
     if rank == 0:
