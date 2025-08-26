@@ -84,8 +84,8 @@ data/real/annotations.json  # COCO polygons + transcripts per image
 # 1. synthetic dataset (20 k images)
 python scripts/generate_dataset.py --num_images 30000 --max_workers 6
 
-# 2. Train detector (40 epochs)
-python scripts/detection/train.py db_mobilenet_v3_large \
+# 2. Train detector (30 epochs)
+python scripts/train_detection.py db_mobilenet_v3_large \
   --train_path data/synth/train \
   --val_path data/synth/val \
   --epochs 30 \
@@ -97,7 +97,8 @@ python scripts/detection/train.py db_mobilenet_v3_large \
   --rotation \
   --eval-straight \
   --early-stop \
-  --output_dir outputs/weights/det
+  --save-interval-epoch \
+  --output_dir outputs/detection
 
 # 3. fine-tune recogniser (60 epochs)
 python scripts/train_rec.py
