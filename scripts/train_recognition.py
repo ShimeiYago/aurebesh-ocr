@@ -37,6 +37,7 @@ from doctr.datasets import VOCABS, RecognitionDataset, WordGenerator
 from doctr.models import login_to_hub, push_to_hf_hub, recognition
 from doctr.utils.metrics import TextMatch
 from utils.recognition import EarlyStopper, plot_recorder, plot_samples
+from utils.config import get_charset
 
 
 def record_lr(
@@ -259,7 +260,11 @@ def main(args):
     if device.type == "cuda":
         torch.backends.cudnn.benchmark = True
 
-    vocab = VOCABS[args.vocab]
+    # Load charset from config file for Aurebesh OCR
+    if args.vocab == "aurebesh":
+        vocab = get_charset()
+    else:
+        vocab = VOCABS[args.vocab]
     fonts = args.font.split(",")
 
     if rank == 0:
@@ -740,7 +745,9 @@ def parse_args():
     parser.add_argument("--wd", "--weight-decay", default=0, type=float, help="weight decay", dest="weight_decay")
     parser.add_argument("-j", "--workers", type=int, default=None, help="number of workers used for dataloading")
     parser.add_argument("--resume", type=str, default=None, help="Path to your checkpoint")
-    parser.add_argument("--vocab", type=str, default="french", help="Vocab to be used for training")
+    parser.add_argument("--vocab", type=str, default="aurebesh", 
+                        choices=["aurebesh", "french", "english", "portuguese", "arabic", "chinese", "japanese", "korean"], 
+                        help="Vocab to be used for training (aurebesh uses custom charset from config)")
     parser.add_argument("--test-only", dest="test_only", action="store_true", help="Run the validation loop")
     parser.add_argument(
         "--freeze-backbone", dest="freeze_backbone", action="store_true", help="freeze model backbone for fine-tuning"

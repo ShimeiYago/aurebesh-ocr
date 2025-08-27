@@ -102,8 +102,22 @@ python scripts/train_detection.py db_mobilenet_v3_large \
   --save-interval-epoch \
   --output_dir outputs/detection
 
-# 3. fine-tune recogniser (60 epochs)
-python scripts/train_rec.py
+# 3. Train recognizer (60 epochs)
+PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognition.py crnn_mobilenet_v3_small \
+  --train_path data/synth/train/cropped \
+  --val_path data/synth/val/cropped \
+  --epochs 50 \
+  --batch_size 32 \
+  --input_size 48 \
+  --lr 0.003 \
+  --optim adamw \
+  --wd 0.0001 \
+  --sched cosine \
+  --vocab aurebesh \
+  --early-stop \
+  --early-stop-epochs 10 \
+  --early-stop-delta 0.002 \
+  --output_dir outputs/recognition
 
 # 4. Evaluate Performance for test data
 python scripts/evaluate.py --images data/synth/test
