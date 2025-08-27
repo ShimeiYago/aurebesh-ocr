@@ -525,6 +525,13 @@ def main(args):
 
     global global_step
     global_step = 0  # Shared global step counter
+
+    # TensorBoard
+    tb_writer = None
+    if rank == 0:
+        from torch.utils.tensorboard import SummaryWriter
+        tb_writer = SummaryWriter(log_dir=str(Path(args.output_dir) / "tensorboard"))
+
     # W&B
     if rank == 0 and args.wb:
         import wandb
@@ -573,12 +580,19 @@ def main(args):
                     value=lr,
                 )
 
-    def log_at_step(train_loss=None, val_loss=None, lr=None):
+    def log_at_step(train_loss=None, val_loss=None, lr=None, tb_writer=None):
         global global_step
         if args.wb:
             wandb_log_at_step(train_loss, val_loss, lr)
         if args.clearml:
             clearml_log_at_step(train_loss, val_loss, lr)
+        if tb_writer is not None:
+            if train_loss is not None:
+                tb_writer.add_scalar("train_loss_step", train_loss, global_step)
+            if val_loss is not None:
+                tb_writer.add_scalar("val_loss_step", val_loss, global_step)
+            if lr is not None:
+                tb_writer.add_scalar("step_lr", lr, global_step)
         global_step += 1  # Increment the shared global step counter
 
     # Create loss queue
@@ -595,7 +609,7 @@ def main(args):
             optimizer,
             scheduler,
             amp=args.amp,
-            log=log_at_step,
+            log=lambda train_loss=None, val_loss=None, lr=None: log_at_step(train_loss, val_loss, lr, tb_writer),
             rank=rank,
         )
 
@@ -604,7 +618,7 @@ def main(args):
 
             # Validation loop at the end of each epoch
             val_loss, exact_match, partial_match = evaluate(
-                model, device, val_loader, batch_transforms, val_metric, amp=args.amp, log=log_at_step
+                model, device, val_loader, batch_transforms, val_metric, amp=args.amp, log=lambda train_loss=None, val_loss=None, lr=None: log_at_step(train_loss, val_loss, lr, tb_writer)
             )
             if val_loss < min_loss:
                 # All processes should see same parameters as they all start from same
@@ -619,6 +633,14 @@ def main(args):
                 f"Epoch {epoch + 1}/{args.epochs} - Validation loss: {val_loss:.6} "
                 f"(Exact: {exact_match:.2%} | Partial: {partial_match:.2%})"
             )
+            # TensorBoard epoch logging
+            if tb_writer is not None:
+                tb_writer.add_scalar("train_loss", train_loss, epoch)
+                tb_writer.add_scalar("val_loss", val_loss, epoch)
+                tb_writer.add_scalar("learning_rate", actual_lr, epoch)
+                tb_writer.add_scalar("exact_match", exact_match, epoch)
+                tb_writer.add_scalar("partial_match", partial_match, epoch)
+
             # W&B
             if args.wb:
                 wandb.log({
