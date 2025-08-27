@@ -44,6 +44,7 @@ def record_lr(
     train_loader: DataLoader,
     batch_transforms,
     optimizer,
+    device,
     start_lr: float = 1e-7,
     end_lr: float = 1,
     num_it: int = 100,
@@ -68,19 +69,26 @@ def record_lr(
     loss_recorder = []
 
     if amp:
-        scaler = torch.cuda.amp.GradScaler()
+        if device.type == "cuda":
+            scaler = torch.cuda.amp.GradScaler()
+        else:
+            # MPS and other devices use CPU-based scaler for AMP
+            scaler = torch.amp.GradScaler('cpu')
 
     for batch_idx, (images, targets) in enumerate(train_loader):
-        if torch.cuda.is_available():
-            images = images.cuda()
+        images = images.to(device)
 
         images = batch_transforms(images)
 
         # Forward, Backward & update
         optimizer.zero_grad()
         if amp:
-            with torch.cuda.amp.autocast():
-                train_loss = model(images, targets)["loss"]
+            if device.type == "cuda":
+                with torch.cuda.amp.autocast():
+                    train_loss = model(images, targets)["loss"]
+            else:
+                with torch.amp.autocast(device_type='cpu'):
+                    train_loss = model(images, targets)["loss"]
             scaler.scale(train_loss).backward()
             # Gradient clipping
             scaler.unscale_(optimizer)
@@ -112,21 +120,28 @@ def record_lr(
 
 def fit_one_epoch(model, device, train_loader, batch_transforms, optimizer, scheduler, amp=False, log=None, rank=0):
     if amp:
-        scaler = torch.cuda.amp.GradScaler()
+        if device.type == "cuda":
+            scaler = torch.cuda.amp.GradScaler()
+        else:
+            # MPS and other devices use CPU-based scaler for AMP
+            scaler = torch.amp.GradScaler('cpu')
 
     model.train()
     # Iterate over the batches of the dataset
     epoch_train_loss, batch_cnt = 0, 0
     pbar = tqdm(train_loader, dynamic_ncols=True, disable=(rank != 0))
     for images, targets in pbar:
-        if torch.cuda.is_available():
-            images = images.to(device)
+        images = images.to(device)
         images = batch_transforms(images)
 
         optimizer.zero_grad()
         if amp:
-            with torch.cuda.amp.autocast():
-                train_loss = model(images, targets)["loss"]
+            if device.type == "cuda":
+                with torch.cuda.amp.autocast():
+                    train_loss = model(images, targets)["loss"]
+            else:
+                with torch.amp.autocast(device_type='cpu'):
+                    train_loss = model(images, targets)["loss"]
             scaler.scale(train_loss).backward()
             # Gradient clipping
             scaler.unscale_(optimizer)
@@ -167,8 +182,12 @@ def evaluate(model, device, val_loader, batch_transforms, val_metric, amp=False,
         images = images.to(device)
         images = batch_transforms(images)
         if amp:
-            with torch.cuda.amp.autocast():
-                out = model(images, targets, return_preds=True)
+            if device.type == "cuda":
+                with torch.cuda.amp.autocast():
+                    out = model(images, targets, return_preds=True)
+            else:
+                with torch.amp.autocast(device_type='cpu'):
+                    out = model(images, targets, return_preds=True)
         else:
             out = model(images, targets, return_preds=True)
         # Compute metric
@@ -215,6 +234,8 @@ def main(args):
         # Silent default switch to GPU if available
         elif torch.cuda.is_available():
             device = torch.device("cuda", 0)
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps")
         else:
             logging.warning("No accessible GPU, target device set to CPU.")
             device = torch.device("cpu")
@@ -234,7 +255,9 @@ def main(args):
     if not isinstance(args.workers, int):
         args.workers = min(16, multiprocessing.cpu_count())
 
-    torch.backends.cudnn.benchmark = True
+    # Only set benchmark for CUDA
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
 
     vocab = VOCABS[args.vocab]
     fonts = args.font.split(",")
@@ -297,7 +320,7 @@ def main(args):
             drop_last=False,
             num_workers=args.workers,
             sampler=SequentialSampler(val_set),
-            pin_memory=torch.cuda.is_available(),
+            pin_memory=(device.type == "cuda"),
             collate_fn=val_set.collate_fn,
         )
         pbar.write(
@@ -319,9 +342,10 @@ def main(args):
         for p in model.feat_extractor.parameters():
             p.requires_grad = False
 
-    if torch.cuda.is_available():
+    # Move model to device
+    model = model.to(device)
+    if device.type == "cuda":
         torch.cuda.set_device(device)
-        model = model.to(device)
 
     if distributed:
         # construct DDP model
@@ -428,7 +452,7 @@ def main(args):
         drop_last=True,
         num_workers=args.workers,
         sampler=sampler,
-        pin_memory=torch.cuda.is_available(),
+        pin_memory=(device.type == "cuda"),
         collate_fn=train_set.collate_fn,
     )
     if rank == 0:
@@ -461,7 +485,7 @@ def main(args):
 
     # LR finder
     if rank == 0 and args.find_lr:
-        lrs, losses = record_lr(model, train_loader, batch_transforms, optimizer, amp=args.amp)
+        lrs, losses = record_lr(model, train_loader, batch_transforms, optimizer, device, amp=args.amp)
         plot_recorder(lrs, losses)
         return
 
