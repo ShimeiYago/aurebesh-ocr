@@ -107,8 +107,8 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognition.py crnn_mobilenet
   --train_path data/synth/train/cropped \
   --val_path data/synth/val/cropped \
   --epochs 50 \
-  --batch_size 32 \
-  --input_size 48 \
+  --batch_size 64 \
+  --input_size 32 \
   --lr 0.003 \
   --optim adamw \
   --wd 0.0001 \
