@@ -31,7 +31,7 @@ from doctr import transforms as T
 from doctr.datasets import DetectionDataset
 from doctr.models import detection, login_to_hub, push_to_hf_hub
 from doctr.utils.metrics import LocalizationConfusion
-from utils import EarlyStopper, plot_recorder, plot_samples
+from utils.recognition import EarlyStopper, plot_recorder, plot_samples
 
 
 def identity_transform(x):
@@ -311,6 +311,10 @@ def main(args):
         pbar.write(f"Resuming {args.resume}")
         model.from_pretrained(args.resume)
 
+    # Move model to device before evaluation or training
+    if torch.cuda.is_available() or torch.backends.mps.is_available():
+        model = model.to(device)
+
     if rank == 0:
         # Metrics
         val_metric = LocalizationConfusion(use_polygons=args.rotation and not args.eval_straight)
@@ -409,9 +413,6 @@ def main(args):
     if args.freeze_backbone:
         for p in model.feat_extractor.parameters():
             p.requires_grad = False
-
-    if torch.cuda.is_available() or torch.backends.mps.is_available():
-        model = model.to(device)
 
     if distributed:
         # construct DDP model

@@ -102,7 +102,17 @@ python scripts/train_detection.py db_mobilenet_v3_large \
   --save-interval-epoch \
   --output_dir outputs/detection
 
-# 3. Train recognizer (60 epochs)
+# 3. Evaluate detector
+python scripts/train_detection.py db_mobilenet_v3_large \
+  --train_path data/synth/train \
+  --val_path data/synth/test \
+  --batch_size 4 \
+  --input_size 1024 \
+  --rotation \
+  --test-only \
+  --resume outputs/detection/xxx.pt
+
+# 4. Train recognizer (50 epochs)
 PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognition.py crnn_mobilenet_v3_small \
   --train_path data/synth/train/cropped \
   --val_path data/synth/val/cropped \
