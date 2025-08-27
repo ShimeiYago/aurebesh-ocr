@@ -86,6 +86,7 @@ python scripts/generate_dataset.py --num_images 30000 --max_workers 6
 
 # 2. Train detector (30 epochs)
 python scripts/train_detection.py db_mobilenet_v3_large \
+  --name mobilenet_large \
   --train_path data/synth/train \
   --val_path data/synth/val \
   --epochs 30 \
@@ -110,10 +111,11 @@ python scripts/train_detection.py db_mobilenet_v3_large \
   --input_size 1024 \
   --rotation \
   --test-only \
-  --resume outputs/detection/xxx.pt
+  --resume outputs/detection/mobilenet_large.pt
 
 # 4. Train recognizer (50 epochs)
 PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognition.py crnn_mobilenet_v3_small \
+  --name mobilenet_small \
   --train_path data/synth/train/cropped \
   --val_path data/synth/val/cropped \
   --epochs 50 \
@@ -128,6 +130,16 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognition.py crnn_mobilenet
   --early-stop-epochs 10 \
   --early-stop-delta 0.002 \
   --output_dir outputs/recognition
+
+# 5. Evaluate recognizer
+PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognition.py crnn_mobilenet_v3_small \
+  --train_path data/synth/train/cropped \
+  --val_path data/synth/test/cropped \
+  --batch_size 64 \
+  --input_size 32 \
+  --vocab aurebesh \
+  --test-only \
+  --resume outputs/recognition/mobilenet_small.pt
 
 # 4. Evaluate Performance for test data
 python scripts/evaluate.py --images data/synth/test
