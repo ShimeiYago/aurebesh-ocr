@@ -92,7 +92,7 @@ python scripts/train_detection.py db_mobilenet_v3_large \
   --epochs 30 \
   --batch_size 4 \
   --input_size 1024 \
-  --lr 0.0001 \
+  --lr 0.0003 \
   --optim adamw \
   --wd 0.0001 \
   --sched cosine \
@@ -100,7 +100,6 @@ python scripts/train_detection.py db_mobilenet_v3_large \
   --rotation \
   --eval-straight \
   --early-stop \
-  --save-interval-epoch \
   --output_dir outputs/detection
 
 # 3. Evaluate detector
