@@ -125,8 +125,27 @@ def run_inference_on_image(predictor, image_path: str) -> List[Dict[str, Any]]:
     for block in page.blocks:
         for line in block.lines:
             for word in line.words:
-                # word.geometry は 0..1 の正規化 polygon（N×2）
+                # word.geometry は正規化座標（0-1）
                 poly_norm = word.geometry
+                
+                # tupleをnumpy arrayに変換
+                if isinstance(poly_norm, tuple):
+                    poly_norm = np.array(poly_norm)
+                
+                # 2点のbounding box形式を4点のpolygonに変換
+                if poly_norm.shape[0] == 2:
+                    # (x1,y1), (x2,y2) -> 4点のpolygon
+                    x1, y1 = poly_norm[0]
+                    x2, y2 = poly_norm[1]
+                    # 左上 -> 右上 -> 右下 -> 左下 の順序
+                    poly_norm = np.array([
+                        [x1, y1],  # 左上
+                        [x2, y1],  # 右上
+                        [x2, y2],  # 右下
+                        [x1, y2]   # 左下
+                    ])
+                
+                # ピクセル座標に変換
                 pts = [[int(x * w), int(y * h)] for (x, y) in poly_norm]
                 conf = float(getattr(word, "confidence", 1.0))
                 results.append({
