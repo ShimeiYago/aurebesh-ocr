@@ -114,7 +114,7 @@ def read_labels_json(dataset_root: str) -> Dict[str, Any]:
 # -------------------------
 # Inference core
 # -------------------------
-def run_inference_on_image(predictor, image_path: str) -> List[Dict[str, Any]]:
+def run_inference_on_image(predictor, image_path: str, cfg: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     """
     Return: [{polygon: [[x,y],...], text: str, confidence: float}, ...]
     polygon は画像ピクセル座標（整数）に変換して返す
@@ -154,9 +154,26 @@ def run_inference_on_image(predictor, image_path: str) -> List[Dict[str, Any]]:
                 # ピクセル座標に変換
                 pts = [[int(x * w), int(y * h)] for (x, y) in poly_norm]
                 conf = float(getattr(word, "confidence", 1.0))
+                
+                # 後段フィルタの適用
+                text = word.value
+                if cfg and "recognizer" in cfg:
+                    rec_cfg = cfg["recognizer"]
+                    print(rec_cfg)
+                    
+                    # min_conf フィルタ
+                    min_conf = rec_cfg["min_conf"]
+                    if conf < min_conf:
+                        continue
+                    
+                    # min_len フィルタ
+                    min_len = rec_cfg.get("min_len", 0)
+                    if len(text) < min_len:
+                        continue
+                
                 results.append({
                     "polygon": pts,
-                    "text": word.value,
+                    "text": text,
                     "confidence": conf,
                 })
     return results

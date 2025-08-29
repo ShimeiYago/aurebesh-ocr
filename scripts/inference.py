@@ -31,7 +31,7 @@ def main():
 
     results = {}
     for img_path in list_images(args.input_images):
-        preds = run_inference_on_image(predictor, img_path)
+        preds = run_inference_on_image(predictor, img_path, cfg)
         results[os.path.basename(img_path)] = preds
 
         vis = draw_predictions(img_path, preds)
