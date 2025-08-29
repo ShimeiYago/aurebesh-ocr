@@ -1,30 +1,17 @@
-# Postprocessing configuration for DBNet inference and evaluation
-# These parameters are used in inference.py and evaluate.py
+detector:
+  # DBPostProcessor のしきい値
+  bin_thresh: 0.35
+  box_thresh: 0.68
+  unclip_ratio: 1.3
+  min_size: 3
 
-# Text detection post-processing
-detection:
-  # Binarization threshold (increased from default ~0.3 to improve separation)
-  binarize_threshold: 0.4
-  
-  # Box threshold (increased to filter low-quality wide regions)
-  box_thresh: 0.6
-  
-  # Unclip ratio (decreased from default ~2.0 to prevent line merging)
-  unclip_ratio: 1.2
-  
-  # Minimum box size
-  min_size: 10
-  
-  # Maximum candidates to keep
-  max_candidates: 1000
-  
-  # Confidence threshold for final detection
-  conf_threshold: 0.5
+  # 評価時のマッチング閾値
+  iou_thresh: 0.5
 
-# Input processing
-input:
-  # Image size for inference
-  size: 1024
-  
-  # Batch size for inference
-  batch_size: 1
+recognizer:
+  # デコード方式
+  beam_width: 1  # 1=greedy, 5〜10=beam search
+
+  # 後段フィルタ
+  min_conf: 0.60
+  # min_len: 2  # min_confで十分な場合が多いが、それでも誤認識が多い場合に使用
