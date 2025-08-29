@@ -22,9 +22,9 @@ def main():
     cfg = load_config(args.config)
     device = pick_device()
 
-    det, post = load_detector(args.det_path, cfg, device)
+    det = load_detector(args.det_path, cfg, device)
     reco = load_recognizer(args.rec_path, cfg, device)
-    predictor = build_predictor(det, reco, post)
+    predictor = build_predictor(det, reco)
 
     os.makedirs(args.save_dir, exist_ok=True)
     os.makedirs(os.path.join(args.save_dir, "images"), exist_ok=True)

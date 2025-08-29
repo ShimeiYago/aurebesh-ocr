@@ -3,7 +3,6 @@ detector:
   bin_thresh: 0.35
   box_thresh: 0.68
   unclip_ratio: 1.3
-  min_size: 3
 
   # 評価時のマッチング閾値
   iou_thresh: 0.5

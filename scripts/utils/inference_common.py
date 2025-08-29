@@ -14,7 +14,7 @@ import cv2
 from doctr.io import DocumentFile
 from doctr.models import ocr_predictor
 from doctr.models.detection import db_mobilenet_v3_large
-from doctr.models.detection.core import DetectionPostProcessor
+from doctr.models.detection.differentiable_binarization.base import DBPostProcessor
 from doctr.models.recognition import crnn_mobilenet_v3_small
 
 from shapely.geometry import Polygon
@@ -55,14 +55,21 @@ def load_detector(det_pt: str, cfg: Dict[str, Any], device: torch.device):
     det.to(device).eval()
 
     pp_cfg = cfg["detector"]
-    post = DetectionPostProcessor(
+
+    # postprocessorのハイパーパラメータ設定
+    det.postprocessor = DBPostProcessor(
         bin_thresh=pp_cfg["bin_thresh"],
         box_thresh=pp_cfg["box_thresh"],
         # unclip_ratio=pp_cfg["unclip_ratio"],
         # min_size=pp_cfg["min_size"],
         assume_straight_pages=False
     )
-    return det, post
+    
+    # コンストラクタで設定できない属性を後から設定
+    det.postprocessor.unclip_ratio = pp_cfg["unclip_ratio"]
+    # min_size は docTR の内部でハードコードされているため、ここでは設定不要
+
+    return det
 
 def load_recognizer(rec_pt: str, cfg: Dict[str, Any], device: torch.device):
     vocab = cfg["charset"]["vocab"]
@@ -75,10 +82,9 @@ def load_recognizer(rec_pt: str, cfg: Dict[str, Any], device: torch.device):
     # beam_width は必要なら cfg["recognizer"]["beam_width"] から取得して使う
     return reco
 
-def build_predictor(det, reco, post):
-    # doctr の ocr_predictor はインスタンスを渡せる？
-    # return ocr_predictor(det_arch=det, reco_arch=reco, pretrained=False, detector_postprocessor=post)
-    return ocr_predictor(det_arch=det, reco_arch=reco, pretrained=False, assume_straight_pages=True)
+def build_predictor(det, reco):
+    # doctr の ocr_predictor を使用
+    return ocr_predictor(det_arch=det, reco_arch=reco, assume_straight_pages=False)
 
 
 # -------------------------
