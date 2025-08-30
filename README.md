@@ -140,55 +140,21 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognition.py crnn_mobilenet
   --test-only \
   --resume outputs/recognition/mobilenet_small.pt
 
-# 4. Evaluate Performance for test data
-python scripts/evaluate.py --images data/synth/test
+# 6. Evaluate E2E Performance
+python scripts/evaluate.py \
+  --input data/synth/test \
+  --det_path outputs/detection/mobilenet_large.pt \
+  --rec_path outputs/recognition/mobilenet_small.pt \
+  --config configs/inference.yaml
 
-# 5. Run Inference
-python scripts/inference.py --output_dir outputs/inference --img_path data/real
+# 7. Run Inference
+python inference.py \
+  --input_images data/real/images \
+  --det_path outputs/detection/mobilenet_large.pt \
+  --rec_path outputs/recognition/mobilenet_small.pt \
+  --config configs/inference.yaml \
+  --save_dir outputs/inference
 ```
-
----
-
-## Configuration
-
-You can customize the behavior of the OCR pipeline by editing the configuration files in the `configs/` directory:
-
-### `charset_aurebesh.yaml`
-- **Purpose**: Defines the character set for recognition
-- **Default**: Includes digits (0-9) and uppercase letters (A-Z)
-- **Usage**: Modify to add/remove characters the recognizer should learn
-
-### `dataset.yaml`
-- **Purpose**: Controls synthetic dataset generation parameters
-- **Key settings**:
-  - `style.font`: Font sampling probabilities (core: 60%, variant: 40%)
-  - `style.text`: Text generation parameters (word count, length ranges)
-  - `style.color`: Text and background color modes
-  - `effects`: Visual effects like shadow, border, rotation
-  - `augmentation`: Data augmentation settings (perspective, noise, blur, JPEG compression)
-
-### `train_det.yaml`
-- **Purpose**: Detection model training configuration
-- **Key settings**:
-  - `epochs`: 40
-  - `batch_size`: 4
-  - `optimizer`: AdamW with learning rate 1e-4, weight decay 1e-4
-  - `scheduler`: CosineAnnealingLR with 5-epoch warmup, eta_min 1e-6
-  - `amp`: Automatic Mixed Precision enabled
-  - `metrics`: mAP@50
-
-### `train_rec.yaml`
-- **Purpose**: Recognition model training configuration (aggressive training for faster convergence)
-- **Key settings**:
-  - `epochs`: 60
-  - `batch_size`: 32 (smaller batch for higher gradient noise)
-  - `optimizer`: AdamW with learning rate 3e-4, weight decay 1e-5
-  - `scheduler`: StepLR (halve LR every 15 epochs)
-  - `metrics`: Character Error Rate (CER)
-  - `charset`: Links to `charset_aurebesh.yaml`
-  - `early_stopping`: patience 10, min_delta 0.001
-
-To modify training behavior, edit the relevant YAML file before running the training scripts.
 
 ---
 
