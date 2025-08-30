@@ -1,13 +1,13 @@
 detector:
   # DBPostProcessor のしきい値
-  bin_thresh: 0.35
-  box_thresh: 0.68
-  unclip_ratio: 1.3
+  bin_thresh: 0.3    # doctrのデフォルトは 0.3
+  box_thresh: 0.5    # doctrのデフォルトは 0.1
+  unclip_ratio: 1.3  # doctrのデフォルトは 1.5
 
   # 評価時のマッチング閾値
   iou_thresh: 0.5
 
 recognizer:
   # 後段フィルタ
-  min_conf: 0.60   # 信頼度が低い検出結果を除外
-  # min_len: 2       # 短すぎるテキストを除外（文字数）。min_confで十分な場合が多いが、それでも誤認識が多い場合に使用
+  min_conf: 0.3   # 信頼度が低い検出結果を除外
+  # min_len: 2.0  # 短すぎるテキストを除外（文字数）。min_confで十分な場合が多いが、それでも誤認識が多い場合に使用
