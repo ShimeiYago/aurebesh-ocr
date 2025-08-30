@@ -52,9 +52,9 @@ def main():
     device = pick_device()
     iou_thresh = cfg["detector"]["iou_thresh"]
 
-    det, post = load_detector(args.det_path, cfg, device)
+    det = load_detector(args.det_path, cfg, device)
     reco = load_recognizer(args.rec_path, cfg, device)
-    predictor = build_predictor(det, reco, post)
+    predictor = build_predictor(det, reco)
 
     labels = read_labels_json(args.input)
     img_dir = os.path.join(args.input, "images")
