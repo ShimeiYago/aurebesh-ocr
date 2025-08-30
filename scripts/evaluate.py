@@ -10,6 +10,8 @@ from utils.inference_common import (
     read_labels_json, run_inference_on_image, poly_iou, create_progress_bar
 )
 
+IOU_THRESH = 0.5
+
 def parse_args():
     ap = argparse.ArgumentParser(description="OCR end-to-end evaluation (det+rec)")
     ap.add_argument("--input", required=True, help="dataset root containing images/ and labels.json")
@@ -21,7 +23,7 @@ def parse_args():
 
 # 簡易 1:1 マッチング（Hungarianを使わない貪欲法）
 def match_detections(
-    preds: List[Dict[str, Any]], gts: List[Dict[str, Any]], iou_thresh: float
+    preds: List[Dict[str, Any]], gts: List[Dict[str, Any]]
 ) -> Tuple[List[Tuple[int,int,float]], List[int], List[int]]:
     """
     Return:
@@ -40,7 +42,7 @@ def match_detections(
             iou = poly_iou(p["polygon"], g["polygon"])
             if iou > best_iou:
                 best_iou, best_pi = iou, pi
-        if best_pi >= 0 and best_iou >= iou_thresh:
+        if best_pi >= 0 and best_iou >= IOU_THRESH:
             matches.append((best_pi, gi, best_iou))
             used_p.add(best_pi)
             used_g.add(gi)
@@ -52,7 +54,6 @@ def main():
     args = parse_args()
     cfg = load_config(args.config)
     device = pick_device()
-    iou_thresh = cfg["detector"]["iou_thresh"]
 
     det = load_detector(args.det_path, cfg, device)
     reco = load_recognizer(args.rec_path, cfg, device)
@@ -89,7 +90,7 @@ def main():
             gts.append({"polygon": poly, "text": gt_text})
 
         # 検出マッチング
-        matches, fp_idx, fn_idx = match_detections(preds, gts, iou_thresh)
+        matches, fp_idx, fn_idx = match_detections(preds, gts)
 
         det_tp += len(matches)
         det_fp += len(fp_idx)
