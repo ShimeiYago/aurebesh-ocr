@@ -149,7 +149,7 @@ python scripts/evaluate.py \
   --save_path outputs/evaluate/results.json
 
 # 7. Run Inference
-python inference.py \
+python scripts/inference.py \
   --input_images data/real/images \
   --det_path outputs/detection/mobilenet_large.pt \
   --rec_path outputs/recognition/mobilenet_small.pt \

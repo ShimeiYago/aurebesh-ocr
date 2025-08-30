@@ -5,7 +5,7 @@ import argparse
 
 from utils.inference_common import (
     load_config, pick_device, load_detector, load_recognizer, build_predictor,
-    list_images, run_inference_on_image, draw_predictions, cv2
+    list_images, run_inference_on_image, draw_predictions, cv2, create_progress_bar
 )
 
 def parse_args():
@@ -29,8 +29,10 @@ def main():
     os.makedirs(args.save_dir, exist_ok=True)
     os.makedirs(os.path.join(args.save_dir, "images"), exist_ok=True)
 
+    image_paths = list_images(args.input_images)
     results = {}
-    for img_path in list_images(args.input_images):
+    
+    for img_path in create_progress_bar(image_paths, desc="Processing images"):
         preds = run_inference_on_image(predictor, img_path, cfg)
         results[os.path.basename(img_path)] = preds
 

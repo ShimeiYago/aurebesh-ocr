@@ -9,6 +9,7 @@ import yaml
 import torch
 import numpy as np
 import cv2
+from tqdm import tqdm
 
 # ── docTR
 from doctr.io import DocumentFile
@@ -60,8 +61,6 @@ def load_detector(det_pt: str, cfg: Dict[str, Any], device: torch.device):
     det.postprocessor = DBPostProcessor(
         bin_thresh=pp_cfg["bin_thresh"],
         box_thresh=pp_cfg["box_thresh"],
-        # unclip_ratio=pp_cfg["unclip_ratio"],
-        # min_size=pp_cfg["min_size"],
         assume_straight_pages=False
     )
     
@@ -159,7 +158,6 @@ def run_inference_on_image(predictor, image_path: str, cfg: Dict[str, Any] = Non
                 text = word.value
                 if cfg and "recognizer" in cfg:
                     rec_cfg = cfg["recognizer"]
-                    print(rec_cfg)
                     
                     # min_conf フィルタ
                     min_conf = rec_cfg["min_conf"]
@@ -219,3 +217,25 @@ def poly_iou(poly_a: List[List[int]], poly_b: List[List[int]]) -> float:
     inter = pa.intersection(pb).area
     union = pa.union(pb).area
     return float(inter / union) if union > 0 else 0.0
+
+
+# -------------------------
+# Progress bar helpers
+# -------------------------
+def create_progress_bar(iterable, desc: str = "", total: int = None):
+    """共通のプログレスバー作成関数"""
+    return tqdm(iterable, desc=desc, total=total, unit="files", 
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
+
+def run_inference_with_progress(predictor, image_paths: List[str], cfg: Dict[str, Any] = None, 
+                               desc: str = "Processing images") -> Dict[str, List[Dict[str, Any]]]:
+    """プログレスバー付きで複数画像の推論を実行"""
+    results = {}
+    for img_path in create_progress_bar(image_paths, desc=desc):
+        try:
+            preds = run_inference_on_image(predictor, img_path, cfg)
+            results[os.path.basename(img_path)] = preds
+        except Exception as e:
+            print(f"Warning: Failed to process {img_path}: {e}")
+            results[os.path.basename(img_path)] = []
+    return results

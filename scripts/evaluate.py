@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Tuple
 
 from utils.inference_common import (
     load_config, pick_device, load_detector, load_recognizer, build_predictor,
-    list_images, read_labels_json, run_inference_on_image, poly_iou
+    read_labels_json, run_inference_on_image, poly_iou, create_progress_bar
 )
 
 def parse_args():
@@ -71,7 +71,8 @@ def main():
 
     e2e_tp = e2e_fp = e2e_fn = 0  # Strict: IoU>=th かつ 文字完全一致
 
-    for fname, ann in labels.items():
+    # プログレスバー付きでラベルを処理
+    for fname, ann in create_progress_bar(labels.items(), desc="Evaluating images", total=len(labels)):
         img_path = os.path.join(img_dir, fname)
         if not os.path.exists(img_path):
             # ラベルにあるが画像がない場合はスキップ
