@@ -1,6 +1,7 @@
 # scripts/evaluate.py
 from __future__ import annotations
 import os
+import json
 import argparse
 from typing import Any, Dict, List, Tuple
 
@@ -15,6 +16,7 @@ def parse_args():
     ap.add_argument("--det_path", default="outputs/detection/mobilenet_large.pt", help=".pt path for detector")
     ap.add_argument("--rec_path", default="outputs/recognition/mobilenet_small.pt", help=".pt path for recognizer")
     ap.add_argument("--config", default="configs/inference.yaml")
+    ap.add_argument("--save_path", default="outputs/evaluate/results.json", help="File path to save results")
     return ap.parse_args()
 
 # 簡易 1:1 マッチング（Hungarianを使わない貪欲法）
@@ -136,6 +138,41 @@ def main():
 
     print("\n=== End-to-End (strict) ===")
     print(f"Precision: {e2e_p:.4f}  Recall: {e2e_r:.4f}  F1: {e2e_f1:.4f}")
+
+    # 結果をJSONで保存
+    results = {
+        "detection": {
+            "tp": det_tp,
+            "fp": det_fp,
+            "fn": det_fn,
+            "precision": det_p,
+            "recall": det_r,
+            "f1": det_f1,
+            "mean_iou": mean_iou
+        },
+        "recognition": {
+            "word_accuracy": word_acc,
+            "total_words": word_total,
+            "correct_words": word_correct
+        },
+        "end_to_end": {
+            "tp": e2e_tp,
+            "fp": e2e_fp,
+            "fn": e2e_fn,
+            "precision": e2e_p,
+            "recall": e2e_r,
+            "f1": e2e_f1
+        }
+    }
+
+    # 保存ディレクトリを作成
+    os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
+    
+    # JSONファイルに保存
+    with open(args.save_path, 'w', encoding='utf-8') as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    
+    print(f"\n結果を {args.save_path} に保存しました。")
 
 if __name__ == "__main__":
     main()

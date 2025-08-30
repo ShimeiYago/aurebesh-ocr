@@ -145,7 +145,8 @@ python scripts/evaluate.py \
   --input data/synth/test \
   --det_path outputs/detection/mobilenet_large.pt \
   --rec_path outputs/recognition/mobilenet_small.pt \
-  --config configs/inference.yaml
+  --config configs/inference.yaml \
+  --save_path outputs/evaluate/results.json
 
 # 7. Run Inference
 python inference.py \
