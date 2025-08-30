@@ -20,21 +20,20 @@ from doctr.models.recognition import crnn_mobilenet_v3_small
 
 from shapely.geometry import Polygon
 
+from .config import get_charset
+
 
 # -------------------------
 # Config / Device
 # -------------------------
-CHARSET_PATH = "configs/charset_aurebesh.yaml"
-
 def load_config(path: str) -> Dict[str, Any]:
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
     
     # 文字セット設定も読み込み
-    with open(CHARSET_PATH, "r") as f:
-        charset_cfg = yaml.safe_load(f)
+    vocab = get_charset()
+    cfg["charset"] = {"vocab": vocab}
     
-    cfg["charset"] = charset_cfg
     return cfg
 
 def pick_device() -> torch.device:
@@ -72,7 +71,6 @@ def load_detector(det_pt: str, cfg: Dict[str, Any], device: torch.device):
 
 def load_recognizer(rec_pt: str, cfg: Dict[str, Any], device: torch.device):
     vocab = cfg["charset"]["vocab"]
-    print(f"Loaded vocabulary for recognizer: {vocab}")
     reco = crnn_mobilenet_v3_small(pretrained=False, vocab=vocab)
     ckpt = torch.load(rec_pt, map_location="cpu")
     state = ckpt.get("model", ckpt)
