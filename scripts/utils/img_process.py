@@ -9,6 +9,9 @@ from PIL import Image
 import cv2
 
 
+# MARGIN_RATIO = 0.12  # # 端欠け防止のマージン係数（高さH比）
+MARGIN_RATIO = 0
+
 def perspective_crop_polygon(image: Image.Image, polygon: List[List[int]]) -> Image.Image:
     """
     Apply perspective transform to crop rotated polygon as upright rectangle.
@@ -33,6 +36,27 @@ def perspective_crop_polygon(image: Image.Image, polygon: List[List[int]]) -> Im
     
     # Convert polygon to numpy array
     polygon_np = np.array(polygon, dtype=np.float32)
+    
+    # Calculate polygon height to determine margin amounts
+    height1 = np.linalg.norm(polygon_np[3] - polygon_np[0])
+    height2 = np.linalg.norm(polygon_np[2] - polygon_np[1])
+    H = max(height1, height2)
+    
+    # Calculate margin amounts based on polygon height
+    margin_pixels = MARGIN_RATIO * H  # Use ratio as base margin
+    
+    # Simple expansion: move each point outward from polygon center
+    # This is safer and less likely to cause rotation issues
+    center = np.mean(polygon_np, axis=0)
+    expanded_polygon_np = center + (polygon_np - center) * (1 + margin_pixels / H)
+    
+    # Ensure expanded polygon stays within image boundaries
+    image_width, image_height = image.size
+    expanded_polygon_np[:, 0] = np.clip(expanded_polygon_np[:, 0], 0, image_width - 1)
+    expanded_polygon_np[:, 1] = np.clip(expanded_polygon_np[:, 1], 0, image_height - 1)
+    
+    # Use expanded polygon for transformation
+    polygon_np = expanded_polygon_np
     
     # Calculate the width and height of the output rectangle
     # Use the distances between opposite corners to determine dimensions
