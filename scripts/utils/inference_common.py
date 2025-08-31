@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import glob
 import json
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 import yaml
 import torch
@@ -21,6 +21,8 @@ from doctr.models.recognition import crnn_mobilenet_v3_small
 from shapely.geometry import Polygon
 
 from .config import get_charset
+
+from .constants import DETECTION_NORMALIZATION
 
 
 # -------------------------
@@ -106,6 +108,164 @@ def read_labels_json(dataset_root: str) -> Dict[str, Any]:
     fp = os.path.join(dataset_root, "labels.json")
     with open(fp, "r") as f:
         return json.load(f)
+
+
+# -------------------------
+# Detection-only preprocessing (letterbox + normalize)
+# -------------------------
+def _letterbox_resize(
+    img_bgr: np.ndarray,
+    out_size: int,
+    preserve_aspect_ratio: bool = True,
+    symmetric_pad: bool = True,
+    pad_value: int = 0,
+) -> Tuple[np.ndarray, float, int, int]:
+    """
+    OpenCVで学習時と同じ「正方キャンバスへのレターボックス」を再現。
+    Return: resized_canvas_bgr, ratio, pad_left, pad_top
+    """
+    h0, w0 = img_bgr.shape[:2]
+    if not preserve_aspect_ratio:
+        resized = cv2.resize(img_bgr, (out_size, out_size), interpolation=cv2.INTER_LINEAR)
+        return resized, out_size / w0, 0, 0
+
+    r = min(out_size / w0, out_size / h0)
+    nw, nh = int(round(w0 * r)), int(round(h0 * r))
+    resized = cv2.resize(img_bgr, (nw, nh), interpolation=cv2.INTER_LINEAR)
+
+    canvas = np.full((out_size, out_size, 3), pad_value, dtype=resized.dtype)
+    if symmetric_pad:
+        pad_x = (out_size - nw) // 2
+        pad_y = (out_size - nh) // 2
+    else:
+        pad_x, pad_y = 0, 0
+
+    canvas[pad_y:pad_y+nh, pad_x:pad_x+nw] = resized
+    return canvas, r, pad_x, pad_y
+
+
+def preprocess_for_detector(
+    img_bgr: np.ndarray,
+    cfg: Dict[str, Any],
+) -> Tuple[torch.Tensor, Dict[str, Any]]:
+    """
+    学習スクリプトと同一の前処理：
+      1) レターボックス (preserve_aspect_ratio + symmetric_pad)
+      2) BGR->RGB, 0-1
+      3) Normalize(mean, std)
+      4) CHW Tensor化
+    戻り値: (1,3,S,S) tensor, meta辞書（元サイズ/スケール/パディングなど）
+    """
+    det_cfg = cfg["detector"]
+    S = int(det_cfg.get("input_size", 1024))
+    mean = np.array(DETECTION_NORMALIZATION["mean"], dtype=np.float32)
+    std  = np.array(DETECTION_NORMALIZATION["std"], dtype=np.float32)
+    keep = bool(det_cfg.get("preserve_aspect_ratio", True))
+    sym  = bool(det_cfg.get("symmetric_pad", True))
+
+    # letterbox
+    canvas_bgr, ratio, pad_x, pad_y = _letterbox_resize(img_bgr, S, keep, sym, pad_value=0)
+
+    # BGR->RGB, 0-1, Normalize
+    img = cv2.cvtColor(canvas_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    img = (img - mean) / std
+    img = np.transpose(img, (2, 0, 1))  # CHW
+
+    tensor = torch.from_numpy(img).unsqueeze(0)  # 1,3,S,S
+    meta = {
+        "orig_wh": (img_bgr.shape[1], img_bgr.shape[0]),
+        "proc_size": (S, S),
+        "ratio": ratio,
+        "pad_x": pad_x,
+        "pad_y": pad_y,
+    }
+    return tensor, meta
+
+
+# 検出出力（0-1座標）を元画像ピクセル座標に戻す関数
+def _norm_poly_to_pixels(poly01: np.ndarray, meta: Dict[str, Any]) -> List[List[int]]:
+    """
+    poly01: 形状 (4,2) or (N,2) の 0-1 正規化座標（検出器の出力）
+    meta: preprocess_for_detector が返した辞書
+    """
+    S_w, S_h = meta["proc_size"]
+    r = meta["ratio"]; px = meta["pad_x"]; py = meta["pad_y"]
+    W0, H0 = meta["orig_wh"]
+
+    # 正方キャンバス上のピクセル座標へ
+    xy = poly01.copy().astype(np.float32)
+    xy[:, 0] *= S_w
+    xy[:, 1] *= S_h
+
+    # レターボックスのパディングを除去→元スケールへ
+    xy[:, 0] = (xy[:, 0] - px) / max(r, 1e-6)
+    xy[:, 1] = (xy[:, 1] - py) / max(r, 1e-6)
+
+    # 画像外をクリップ
+    xy[:, 0] = np.clip(xy[:, 0], 0, W0 - 1)
+    xy[:, 1] = np.clip(xy[:, 1], 0, H0 - 1)
+
+    return [[int(round(x)), int(round(y))] for x, y in xy]
+
+
+# 画像1枚からポリゴンだけを得る検出ルーチン
+@torch.no_grad()
+def run_detection_on_image(det_model, image_path: str, cfg: Dict[str, Any], device: torch.device) -> List[Dict[str, Any]]:
+    """
+    Return: [{"polygon": [[x,y],...], "score": float}, ...]
+    ※ 認識は行わず、検出のみ
+    """
+    img_bgr = cv2.imread(image_path)
+    if img_bgr is None:
+        raise RuntimeError(f"Failed to read image: {image_path}")
+
+    x, meta = preprocess_for_detector(img_bgr, cfg)
+    x = x.to(device)
+
+    # forward（doctrのDBNetは return_preds=True で正規化座標を返す）
+    out = det_model(x, return_preds=True)
+    loc_preds = out["preds"]  # List[Dict[str, np.ndarray]]
+    results: List[Dict[str, Any]] = []
+
+    if not loc_preds:
+        return results
+
+    # 通常は1画像につき1辞書（クラス名→(N,5,2) など）
+    pred_dict = loc_preds[0]
+    for boxes in pred_dict.values():
+        # 形状の想定: (N, 5, 2) → 前4点がポリゴン、最後の点のx(or y)がscoreになる実装が多い
+        # バージョン差に耐えるようにガード
+        N = boxes.shape[0]
+        for i in range(N):
+            poly = boxes[i, :4, :] if boxes.ndim == 3 and boxes.shape[1] >= 4 else boxes[i]
+            if poly.shape[0] == 2:
+                # (x1,y1),(x2,y2) → 4点に展開
+                (x1, y1), (x2, y2) = poly
+                poly = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32)
+            score = 1.0
+            if boxes.ndim == 3 and boxes.shape[1] >= 5:
+                # doctrの実装では boxes[i,4,0] や boxes[i,4,1] にscoreを積むことがある
+                score = float(np.clip(boxes[i, 4].max(), 0.0, 1.0))
+
+            pts = _norm_poly_to_pixels(np.asarray(poly, dtype=np.float32), meta)
+            results.append({"polygon": pts, "score": score})
+    return results
+
+
+# ポリゴンだけを描画する関数
+def draw_polygons(img_path: str, dets: List[Dict[str, Any]]) -> np.ndarray:
+    img = cv2.imread(img_path)
+    if img is None:
+        raise RuntimeError(f"Failed to read image: {img_path}")
+    for i, item in enumerate(dets):
+        pts = np.array(item["polygon"], dtype=np.int32)
+        cv2.polylines(img, [pts], isClosed=True, color=(0,0,255), thickness=2)
+        # indexだけ小さく表示（必要ならスコアも）
+        x = min(p[0] for p in item["polygon"])
+        y = min(p[1] for p in item["polygon"])
+        cv2.putText(img, f'#{i}', (x, max(0, y-4)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1, cv2.LINE_AA)
+    return img
 
 
 # -------------------------

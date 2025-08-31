@@ -32,6 +32,7 @@ from doctr.datasets import DetectionDataset
 from doctr.models import detection, login_to_hub, push_to_hf_hub
 from doctr.utils.metrics import LocalizationConfusion
 from utils.recognition import EarlyStopper, plot_recorder, plot_samples
+from utils.constants import DETECTION_NORMALIZATION
 
 
 def identity_transform(x):
@@ -297,7 +298,7 @@ def main(args):
     # unpack class names on all ranks
     class_names = cls_container[0]
 
-    batch_transforms = Normalize(mean=(0.798, 0.785, 0.772), std=(0.264, 0.2749, 0.287))
+    batch_transforms = Normalize(mean=DETECTION_NORMALIZATION["mean"], std=DETECTION_NORMALIZATION["std"])
 
     # Load docTR model
     model = detection.__dict__[args.arch](

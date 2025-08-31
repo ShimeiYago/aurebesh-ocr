@@ -2,7 +2,7 @@ detector:
   # DBPostProcessor のしきい値
   bin_thresh: 0.3    # doctrのデフォルトは 0.3
   box_thresh: 0.5    # doctrのデフォルトは 0.1
-  unclip_ratio: 1.3  # doctrのデフォルトは 1.5
+  unclip_ratio: 1.5  # doctrのデフォルトは 1.5
 
 recognizer:
   # 後段フィルタ

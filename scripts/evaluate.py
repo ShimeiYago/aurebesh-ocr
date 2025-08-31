@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Tuple
 
 from utils.inference_common import (
     load_config, pick_device, load_detector, load_recognizer, build_predictor,
-    read_labels_json, run_inference_on_image, poly_iou, create_progress_bar
+    read_labels_json, run_detection_on_image, run_inference_on_image, poly_iou, create_progress_bar
 )
 
 IOU_THRESH = 0.5
@@ -56,8 +56,8 @@ def main():
     device = pick_device()
 
     det = load_detector(args.det_path, cfg, device)
-    reco = load_recognizer(args.rec_path, cfg, device)
-    predictor = build_predictor(det, reco)
+    # reco = load_recognizer(args.rec_path, cfg, device)
+    # predictor = build_predictor(det, reco)
 
     labels = read_labels_json(args.input)
     img_dir = os.path.join(args.input, "images")
@@ -72,6 +72,50 @@ def main():
 
     e2e_tp = e2e_fp = e2e_fn = 0  # Strict: IoU>=th かつ 文字完全一致
 
+    # # プログレスバー付きでラベルを処理
+    # for fname, ann in create_progress_bar(labels.items(), desc="Evaluating images", total=len(labels)):
+    #     img_path = os.path.join(img_dir, fname)
+    #     if not os.path.exists(img_path):
+    #         # ラベルにあるが画像がない場合はスキップ
+    #         continue
+
+    #     preds = run_inference_on_image(predictor, img_path)
+
+    #     # GT の整形（texts が無い or 長さ不一致に備えて保護）
+    #     polys = ann.get("polygons", [])
+    #     texts = ann.get("texts", [])
+    #     gts: List[Dict[str, Any]] = []
+    #     for i, poly in enumerate(polys):
+    #         gt_text = texts[i] if i < len(texts) else ""
+    #         gts.append({"polygon": poly, "text": gt_text})
+
+    #     # 検出マッチング
+    #     matches, fp_idx, fn_idx = match_detections(preds, gts)
+
+    #     det_tp += len(matches)
+    #     det_fp += len(fp_idx)
+    #     det_fn += len(fn_idx)
+
+    #     for (pi, gi, iou) in matches:
+    #         iou_sum += iou
+    #         iou_cnt += 1
+
+    #         pred_text = preds[pi]["text"]
+    #         gt_text = gts[gi]["text"]
+    #         word_total += 1
+    #         if pred_text == gt_text:
+    #             word_correct += 1
+    #             e2e_tp += 1              # IoU 条件かつ文字一致
+    #         else:
+    #             e2e_fp += 1              # 予測はあるが文字が違う → E2E 的には FP
+    #             e2e_fn += 1              # かつ GT は未検出扱い → E2E 的には FN
+
+    #     # マッチしなかった分は E2E 観点では：
+    #     #   - 予測のみ（fp_idx）→ E2E FP
+    #     #   - GTのみ（fn_idx）→ E2E FN
+    #     e2e_fp += len(fp_idx)
+    #     e2e_fn += len(fn_idx)
+
     # プログレスバー付きでラベルを処理
     for fname, ann in create_progress_bar(labels.items(), desc="Evaluating images", total=len(labels)):
         img_path = os.path.join(img_dir, fname)
@@ -79,7 +123,7 @@ def main():
             # ラベルにあるが画像がない場合はスキップ
             continue
 
-        preds = run_inference_on_image(predictor, img_path)
+        preds = run_detection_on_image(det, img_path, cfg, device)
 
         # GT の整形（texts が無い or 長さ不一致に備えて保護）
         polys = ann.get("polygons", [])
@@ -96,25 +140,12 @@ def main():
         det_fp += len(fp_idx)
         det_fn += len(fn_idx)
 
-        for (pi, gi, iou) in matches:
-            iou_sum += iou
-            iou_cnt += 1
-
-            pred_text = preds[pi]["text"]
-            gt_text = gts[gi]["text"]
-            word_total += 1
-            if pred_text == gt_text:
-                word_correct += 1
-                e2e_tp += 1              # IoU 条件かつ文字一致
-            else:
-                e2e_fp += 1              # 予測はあるが文字が違う → E2E 的には FP
-                e2e_fn += 1              # かつ GT は未検出扱い → E2E 的には FN
-
         # マッチしなかった分は E2E 観点では：
         #   - 予測のみ（fp_idx）→ E2E FP
         #   - GTのみ（fn_idx）→ E2E FN
         e2e_fp += len(fp_idx)
         e2e_fn += len(fn_idx)
+
 
     # Detection 指標
     det_p = det_tp / (det_tp + det_fp) if (det_tp + det_fp) > 0 else 0.0
