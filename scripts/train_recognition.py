@@ -26,6 +26,8 @@ from torchvision.transforms.v2 import (
     RandomPhotometricDistort,
 )
 
+from scripts.utils.constants import RECOGNITION_NORMALIZATION
+
 if os.getenv("TQDM_SLACK_TOKEN") and os.getenv("TQDM_SLACK_CHANNEL"):
     from tqdm.contrib.slack import tqdm
 else:
@@ -332,7 +334,7 @@ def main(args):
             f"Validation set loaded in {time.time() - st:.4}s ({len(val_set)} samples in {len(val_loader)} batches)"
         )
 
-    batch_transforms = Normalize(mean=(0.694, 0.695, 0.693), std=(0.299, 0.296, 0.301))
+    batch_transforms = Normalize(mean=RECOGNITION_NORMALIZATION["mean"], std=RECOGNITION_NORMALIZATION["std"])
 
     # Load doctr model
     model = recognition.__dict__[args.arch](pretrained=args.pretrained, vocab=vocab)

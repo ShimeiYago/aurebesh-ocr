@@ -17,12 +17,14 @@ from doctr.models import ocr_predictor
 from doctr.models.detection import db_mobilenet_v3_large
 from doctr.models.detection.differentiable_binarization.base import DBPostProcessor
 from doctr.models.recognition import crnn_mobilenet_v3_small
+from doctr import transforms as T
 
 from shapely.geometry import Polygon
+from PIL import Image
 
 from .config import get_charset
 
-from .constants import DETECTION_NORMALIZATION
+from .constants import DETECTION_NORMALIZATION, RECOGNITION_NORMALIZATION
 
 
 # -------------------------
@@ -81,6 +83,7 @@ def load_recognizer(rec_pt: str, cfg: Dict[str, Any], device: torch.device):
     # beam_width は必要なら cfg["recognizer"]["beam_width"] から取得して使う
     return reco
 
+# この関数は、標準化処理の値（meanやstd）を外部からカスタムできないため、学習時と乖離する可能性が高く、もう使用しない。
 def build_predictor(det, reco):
     # doctr の ocr_predictor を使用
     return ocr_predictor(det_arch=det, reco_arch=reco, assume_straight_pages=False)
@@ -339,17 +342,46 @@ def run_inference_on_image(predictor, image_path: str, cfg: Dict[str, Any] = Non
 # Visualization
 # -------------------------
 def draw_predictions(img_path: str, preds: List[Dict[str, Any]]) -> np.ndarray:
+    """
+    検出結果とテキスト認識結果を描画
+    """
     img = cv2.imread(img_path)
     if img is None:
         raise RuntimeError(f"Failed to read image: {img_path}")
-    for item in preds:
+    
+    for i, item in enumerate(preds):
         pts = np.array(item["polygon"], dtype=np.int32)
-        cv2.polylines(img, [pts], isClosed=True, color=(0,0,255), thickness=2)
+        # ポリゴンを描画
+        cv2.polylines(img, [pts], isClosed=True, color=(0,255,0), thickness=2)
+        
+        # テキストラベルを描画
+        text = item.get("text", "")
+        confidence = item.get("confidence", 0.0)
+        
         # ラベル描画は左上付近に
         x = min(p[0] for p in item["polygon"])
         y = min(p[1] for p in item["polygon"])
-        cv2.putText(img, f'{item["text"]}', (x, max(0, y-4)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2, cv2.LINE_AA)
+        
+        # 背景付きでテキストを描画
+        label = f'{text} ({confidence:.2f})'
+        font_scale = 0.6
+        thickness = 2
+        
+        # テキストサイズを取得
+        (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+        
+        # 背景を描画
+        cv2.rectangle(img, (x, y - text_height - baseline - 5), 
+                     (x + text_width, y), (0, 255, 0), -1)
+        
+        # テキストを描画
+        cv2.putText(img, label, (x, y - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+        
+        # 番号も描画
+        cv2.putText(img, f'#{i}', (x + text_width + 5, y - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+    
     return img
 
 
@@ -396,4 +428,226 @@ def run_inference_with_progress(predictor, image_paths: List[str], cfg: Dict[str
         except Exception as e:
             print(f"Warning: Failed to process {img_path}: {e}")
             results[os.path.basename(img_path)] = []
+    return results
+
+
+# -------------------------
+# Recognition-specific functions
+# -------------------------
+def preprocess_for_recognizer(
+    crop_img: Image.Image,
+    cfg: Dict[str, Any],
+    input_size: int = 32
+) -> torch.Tensor:
+    """
+    学習時と同一の前処理：
+      1) RGB Image (PIL) を受け取る
+      2) H=input_size, W=4*H にリサイズ（preserve_aspect_ratio=True）
+      3) 0-1正規化 → CHW変換 → Normalize
+      4) Tensor化
+    戻り値: (1,3,H,W) tensor
+    """
+    mean = np.array(RECOGNITION_NORMALIZATION["mean"], dtype=np.float32)
+    std = np.array(RECOGNITION_NORMALIZATION["std"], dtype=np.float32)
+    
+    target_h = input_size
+    target_w = 4 * input_size
+    
+    # PIL ImageでのリサイズでPreserveAspectRatioを再現
+    orig_w, orig_h = crop_img.size
+    
+    # aspect ratioを保持してリサイズ
+    scale = min(target_w / orig_w, target_h / orig_h)
+    new_w = int(orig_w * scale)
+    new_h = int(orig_h * scale)
+    
+    # リサイズ
+    resized_img = crop_img.resize((new_w, new_h), Image.LANCZOS)
+    
+    # キャンバスを作成してセンタリング
+    canvas = Image.new('RGB', (target_w, target_h), (255, 255, 255))  # 白背景
+    paste_x = (target_w - new_w) // 2
+    paste_y = (target_h - new_h) // 2
+    canvas.paste(resized_img, (paste_x, paste_y))
+    
+    # numpy配列に変換してNormalize
+    img_np = np.array(canvas).astype(np.float32) / 255.0
+    img_np = (img_np - mean) / std
+    img_np = np.transpose(img_np, (2, 0, 1))  # CHW
+    
+    tensor = torch.from_numpy(img_np).unsqueeze(0)  # 1,3,H,W
+    return tensor
+
+
+@torch.no_grad()
+def run_recognition_on_crops(
+    reco_model, 
+    crop_images: List[Image.Image], 
+    cfg: Dict[str, Any], 
+    device: torch.device,
+    input_size: int = 32
+) -> List[Tuple[str, float]]:
+    """
+    切り出された画像のリストに対して認識を実行
+    Return: [(text, confidence), ...]
+    """
+    if not crop_images:
+        return []
+    
+    # 前処理
+    tensors = []
+    for crop_img in crop_images:
+        tensor = preprocess_for_recognizer(crop_img, cfg, input_size)
+        tensors.append(tensor)
+    
+    # バッチ化
+    batch_tensor = torch.cat(tensors, dim=0).to(device)
+    
+    # forward
+    reco_model.eval()
+    out = reco_model(batch_tensor)
+    
+    # 結果の解析 - docTRの出力形式に対応
+    results = []
+    
+    # docTRの認識モデルは通常文字列のリストを直接返す
+    if isinstance(out, dict):
+        if 'preds' in out:
+            # predsは文字列のリストの場合が多い
+            preds_list = out['preds']
+            if isinstance(preds_list, list) and len(preds_list) > 0:
+                for i, pred in enumerate(preds_list):
+                    if isinstance(pred, str):
+                        # 直接文字列として返された場合
+                        results.append((pred, 1.0))  # 信頼度は仮で1.0
+                    elif isinstance(pred, tuple) and len(pred) == 2:
+                        # (text, confidence) のタプルの場合
+                        text, confidence = pred
+                        results.append((text, confidence))
+                    else:
+                        # その他の場合
+                        results.append(("", 0.0))
+                return results
+        elif 'logits' in out:
+            logits_batch = out['logits']
+        else:
+            raise RuntimeError(f"Cannot find preds or logits in model output. Available keys: {list(out.keys())}")
+    elif isinstance(out, (list, tuple)):
+        # リストの場合、文字列のリストかもしれない
+        if len(out) > 0 and isinstance(out[0], str):
+            for pred in out:
+                results.append((pred, 1.0))
+            return results
+        else:
+            # Tensorのリストの場合
+            logits_batch = out[0] if len(out) > 0 else out
+    else:
+        # 直接テンソルの場合
+        logits_batch = out
+    
+    # ここまで来た場合はlogitsを処理
+    if hasattr(logits_batch, 'shape'):
+        for i in range(len(crop_images)):
+            logits = logits_batch[i]  # (seq_len, vocab_size)
+            
+            # greedy decode (最も確率の高い文字を選択)
+            pred_ids = torch.argmax(logits, dim=-1)  # (seq_len,)
+            
+            # 文字に変換
+            vocab = cfg["charset"]["vocab"]
+            text = ""
+            confidence_scores = []
+            
+            for j, pred_id in enumerate(pred_ids):
+                pred_id_val = pred_id.item()
+                if pred_id_val < len(vocab):
+                    char = vocab[pred_id_val]
+                    # blank文字（通常は最後の文字）をスキップ
+                    if char not in ['<blank>', '', ' ']:
+                        text += char
+                        # 信頼度を計算
+                        probs = torch.softmax(logits[j], dim=-1)
+                        confidence_scores.append(probs[pred_id_val].item())
+            
+            avg_confidence = np.mean(confidence_scores) if confidence_scores else 0.0
+            results.append((text, avg_confidence))
+    else:
+        # logitsがテンソルでない場合のフォールバック
+        for i in range(len(crop_images)):
+            results.append(("", 0.0))
+    
+    return results
+
+
+def run_full_ocr_on_image(
+    det_model, 
+    reco_model, 
+    image_path: str, 
+    cfg: Dict[str, Any], 
+    device: torch.device,
+    input_size: int = 32
+) -> List[Dict[str, Any]]:
+    """
+    1枚の画像に対してdetection + recognitionを実行
+    Return: [{"polygon": [[x,y],...], "text": str, "confidence": float}, ...]
+    """
+    from .img_process import perspective_crop_polygon
+    
+    # 1. Detection
+    dets = run_detection_on_image(det_model, image_path, cfg, device)
+    if not dets:
+        return []
+    
+    # 2. 元画像を読み込み
+    img_bgr = cv2.imread(image_path)
+    if img_bgr is None:
+        raise RuntimeError(f"Failed to read image: {image_path}")
+    
+    # BGR → RGB → PIL
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(img_rgb)
+    
+    # 3. 各検出領域を切り出し
+    crop_images = []
+    for i, det in enumerate(dets):
+        try:
+            crop_img = perspective_crop_polygon(pil_img, det["polygon"])
+            crop_images.append(crop_img)
+        except Exception as e:
+            print(f"Warning: Failed to crop polygon {det['polygon']}: {e}")
+            crop_images.append(None)
+    
+    # 4. Recognition
+    valid_crops = [img for img in crop_images if img is not None]
+    
+    reco_results = run_recognition_on_crops(
+        reco_model, 
+        valid_crops, 
+        cfg, 
+        device, 
+        input_size
+    )
+    
+    # 5. 結果をマージ
+    results = []
+    reco_idx = 0
+    for i, det in enumerate(dets):
+        if crop_images[i] is not None:
+            text, confidence = reco_results[reco_idx]
+            reco_idx += 1
+        else:
+            text, confidence = "", 0.0
+        
+        # フィルタリング
+        rec_cfg = cfg.get("recognizer", {})
+        min_conf = rec_cfg.get("min_conf", 0.0)
+        
+        if confidence >= min_conf:
+            results.append({
+                "polygon": det["polygon"],
+                "text": text,
+                "confidence": confidence,
+                "det_score": det["score"]
+            })
+    
     return results
