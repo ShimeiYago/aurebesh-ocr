@@ -182,14 +182,39 @@ def draw_predictions(img_path: str, preds: List[Dict[str, Any]]) -> np.ndarray:
     img = cv2.imread(img_path)
     if img is None:
         raise RuntimeError(f"Failed to read image: {img_path}")
+    
+    # 画像サイズに基づいてフォントサイズを調整（プレゼンテーション用に大きく）
+    img_height, img_width = img.shape[:2]
+    base_font_size = max(1.2, min(img_width, img_height) / 800)  # 最小1.2、画像サイズに応じて調整
+    
     for item in preds:
         pts = np.array(item["polygon"], dtype=np.int32)
-        cv2.polylines(img, [pts], isClosed=True, color=(0,0,255), thickness=2)
+        # ボックスの線を太くしてより見やすく
+        cv2.polylines(img, [pts], isClosed=True, color=(0,0,255), thickness=4)
+        
         # ラベル描画は左上付近に
         x = min(p[0] for p in item["polygon"])
         y = min(p[1] for p in item["polygon"])
-        cv2.putText(img, f'{item["text"]}', (x, max(0, y-4)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2, cv2.LINE_AA)
+        
+        # テキストサイズを大きくしてプレゼンテーション用に最適化
+        font_scale = base_font_size
+        thickness = max(2, int(base_font_size * 2))
+        
+        # テキストの背景を追加して読みやすくする
+        text = f'{item["text"]}'
+        (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+        
+        # 背景矩形を描画
+        bg_x1 = x - 2
+        bg_y1 = max(0, y - text_height - baseline - 8)
+        bg_x2 = x + text_width + 4
+        bg_y2 = max(0, y - 2)
+        cv2.rectangle(img, (bg_x1, bg_y1), (bg_x2, bg_y2), (255, 255, 255), -1)
+        cv2.rectangle(img, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 255), 2)
+        
+        # テキストを描画
+        cv2.putText(img, text, (x, max(text_height + 4, y - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0,0,255), thickness, cv2.LINE_AA)
     return img
 
 
