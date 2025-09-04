@@ -128,6 +128,8 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognition.py crnn_mobilenet
   --early-stop \
   --early-stop-epochs 10 \
   --early-stop-delta 0.002 \
+  --min-chars 1 \
+  --max-chars 15 \
   --output_dir outputs/recognition
 
 # 5. Evaluate recognizer
