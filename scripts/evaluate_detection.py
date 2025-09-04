@@ -34,14 +34,16 @@ def evaluate(model, val_loader, batch_transforms, val_metric, amp=False):
     # Validation loop
     val_loss, batch_cnt = 0, 0
     for images, targets in tqdm(val_loader):
-        if torch.cuda.is_available():
-            images = images.cuda()
+        # Move images to the same device as the model
+        images = images.to(next(model.parameters()).device)
         images = batch_transforms(images)
         targets = [{CLASS_NAME: t} for t in targets]
-        if amp:
+        if amp and next(model.parameters()).device.type == "cuda":
+            # AMP is only supported for CUDA devices
             with torch.cuda.amp.autocast():
                 out = model(images, targets, return_preds=True)
         else:
+            # For MPS, CPU, or when AMP is disabled
             out = model(images, targets, return_preds=True)
         # Compute metric
         loc_preds = out["preds"]
@@ -116,7 +118,7 @@ def main(args):
         drop_last=False,
         num_workers=args.workers,
         sampler=SequentialSampler(ds),
-        pin_memory=torch.cuda.is_available(),
+        pin_memory=torch.cuda.is_available() or (hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()),
         collate_fn=ds.collate_fn,
     )
     pbar.write(f"Test set loaded in {time.time() - st:.4}s ({len(ds)} samples in {len(test_loader)} batches)")
@@ -128,20 +130,28 @@ def main(args):
         pbar.write(f"Resuming {args.resume}")
         model.from_pretrained(args.resume)
 
-    # GPU
+    # GPU/MPS/CPU device selection
     if isinstance(args.device, int):
         if not torch.cuda.is_available():
             raise AssertionError("PyTorch cannot access your GPU. Please investigate!")
         if args.device >= torch.cuda.device_count():
             raise ValueError("Invalid device index")
-    # Silent default switch to GPU if available
+        device = f"cuda:{args.device}"
+    # Silent default switch to GPU/MPS if available
     elif torch.cuda.is_available():
         args.device = 0
+        device = "cuda:0"
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        args.device = "mps"
+        device = "mps"
+        pbar.write("Using MPS (Apple Silicon GPU) acceleration.")
     else:
+        args.device = "cpu"
+        device = "cpu"
         pbar.write("No accessible GPU, target device set to CPU.")
-    if torch.cuda.is_available():
-        torch.cuda.set_device(args.device)
-        model = model.cuda()
+    
+    # Move model to device
+    model = model.to(device)
 
     # Metrics
     metric = LocalizationConfusion(use_polygons=args.rotation)
