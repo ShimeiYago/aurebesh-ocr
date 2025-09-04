@@ -16,7 +16,6 @@ if os.getenv("TQDM_SLACK_TOKEN") and os.getenv("TQDM_SLACK_CHANNEL"):
 else:
     from tqdm.auto import tqdm
 
-from doctr import datasets
 from doctr import transforms as T
 from doctr.datasets import VOCABS
 from doctr.models import recognition
@@ -88,22 +87,23 @@ def main(args):
         model.from_pretrained(args.resume)
 
     st = time.time()
-    ds = datasets.__dict__[args.dataset](
-        train=True,
-        download=True,
-        recognition_task=True,
-        use_polygons=args.regular,
+    
+    images_dir = os.path.join(args.dataset, "images")
+    labels_file = os.path.join(args.dataset, "labels.json")
+    
+    if not os.path.exists(images_dir):
+        raise FileNotFoundError(f"Images directory not found: {images_dir}")
+    if not os.path.exists(labels_file):
+        raise FileNotFoundError(f"Labels file not found: {labels_file}")
+    
+    # Load recognition dataset from the specified directory
+    from doctr.datasets import RecognitionDataset
+    
+    ds = RecognitionDataset(
+        img_folder=images_dir,
+        labels_path=labels_file,
         img_transforms=T.Resize((args.input_size, 4 * args.input_size), preserve_aspect_ratio=True),
     )
-
-    _ds = datasets.__dict__[args.dataset](
-        train=False,
-        download=True,
-        recognition_task=True,
-        use_polygons=args.regular,
-        img_transforms=T.Resize((args.input_size, 4 * args.input_size), preserve_aspect_ratio=True),
-    )
-    ds.data.extend((np_img, target) for np_img, target in _ds.data)
 
     test_loader = DataLoader(
         ds,
@@ -160,14 +160,11 @@ def parse_args():
 
     parser.add_argument("arch", type=str, help="text-recognition model to evaluate")
     parser.add_argument("--vocab", type=str, default="french", help="Vocab to be used for evaluation")
-    parser.add_argument("--dataset", type=str, default="FUNSD", help="Dataset to evaluate on")
+    parser.add_argument("--dataset", type=str, default=None, help="Path to dataset directory (e.g., data/synth/test/cropped)")
     parser.add_argument("--device", default=None, type=int, help="device")
     parser.add_argument("-b", "--batch_size", type=int, default=1, help="batch size for evaluation")
     parser.add_argument("--input_size", type=int, default=32, help="input size H for the model, W = 4*H")
     parser.add_argument("-j", "--workers", type=int, default=None, help="number of workers used for dataloading")
-    parser.add_argument(
-        "--only_regular", dest="regular", action="store_true", help="test set contains only regular text"
-    )
     parser.add_argument("--resume", type=str, default=None, help="Checkpoint to resume")
     parser.add_argument("--amp", dest="amp", help="Use Automatic Mixed Precision", action="store_true")
     args = parser.parse_args()
