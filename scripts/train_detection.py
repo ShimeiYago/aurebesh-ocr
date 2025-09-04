@@ -297,14 +297,16 @@ def main(args):
     # unpack class names on all ranks
     class_names = cls_container[0]
 
-    batch_transforms = Normalize(mean=(0.798, 0.785, 0.772), std=(0.264, 0.2749, 0.287))
-
     # Load docTR model
     model = detection.__dict__[args.arch](
         pretrained=args.pretrained,
         assume_straight_pages=not args.rotation,
         class_names=class_names,
     )
+    
+    # Use normalization values from model config for consistency
+    mean, std = model.cfg["mean"], model.cfg["std"]
+    batch_transforms = Normalize(mean=mean, std=std)
 
     # Resume weights
     if isinstance(args.resume, str):
