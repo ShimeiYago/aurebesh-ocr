@@ -20,6 +20,7 @@ from doctr import transforms as T
 from doctr.datasets import VOCABS
 from doctr.models import recognition
 from doctr.utils.metrics import TextMatch
+from utils.config import get_charset
 
 
 @torch.inference_mode()
@@ -74,11 +75,17 @@ def main(args):
     if not isinstance(args.workers, int):
         args.workers = min(16, mp.cpu_count())
 
+    # Load charset from config file for Aurebesh OCR
+    if args.vocab == "aurebesh":
+        vocab = get_charset()
+    else:
+        vocab = VOCABS[args.vocab]
+
     # Load doctr model
     model = recognition.__dict__[args.arch](
         pretrained=True if args.resume is None else False,
         input_shape=(3, args.input_size, 4 * args.input_size),
-        vocab=VOCABS[args.vocab],
+        vocab=vocab,
     ).eval()
 
     # Resume weights
@@ -159,7 +166,9 @@ def parse_args():
     )
 
     parser.add_argument("arch", type=str, help="text-recognition model to evaluate")
-    parser.add_argument("--vocab", type=str, default="french", help="Vocab to be used for evaluation")
+    parser.add_argument("--vocab", type=str, default="aurebesh", 
+                        choices=["aurebesh", "french", "english", "portuguese", "arabic", "chinese", "japanese", "korean"], 
+                        help="Vocab to be used for evaluation (aurebesh uses custom charset from config)")
     parser.add_argument("--dataset", type=str, default=None, help="Path to dataset directory (e.g., data/synth/test/cropped)")
     parser.add_argument("--device", default=None, type=int, help="device")
     parser.add_argument("-b", "--batch_size", type=int, default=1, help="batch size for evaluation")
