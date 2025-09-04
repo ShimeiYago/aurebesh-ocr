@@ -133,13 +133,11 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognition.py crnn_mobilenet
   --output_dir outputs/recognition
 
 # 5. Evaluate recognizer
-PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognition.py crnn_mobilenet_v3_small \
-  --train_path data/synth/train/cropped \
-  --val_path data/synth/test/cropped \
+PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/evaluate_recognition.py crnn_mobilenet_v3_small \
+  --vocab aurebesh \
+  --dataset data/synth/test/cropped \
   --batch_size 64 \
   --input_size 32 \
-  --vocab aurebesh \
-  --test-only \
   --resume outputs/recognition/mobilenet_small.pt
 
 # 6. Evaluate E2E Performance

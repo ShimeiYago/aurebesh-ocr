@@ -24,7 +24,7 @@ from utils.config import get_charset
 
 
 @torch.inference_mode()
-def evaluate(model, val_loader, batch_transforms, val_metric, amp=False):
+def evaluate(model, device, val_loader, batch_transforms, val_metric, amp=False):
     # Model in eval mode
     model.eval()
     # Reset val metric
@@ -35,11 +35,16 @@ def evaluate(model, val_loader, batch_transforms, val_metric, amp=False):
     for images, targets in pbar:
         try:
             # Move images to the same device as the model
-            images = images.to(next(model.parameters()).device)
+            images = images.to(device)
             images = batch_transforms(images)
-            if amp and next(model.parameters()).device.type == "cuda":
-                with torch.cuda.amp.autocast():
-                    out = model(images, targets, return_preds=True)
+            if amp:
+                if device.type == "cuda":
+                    with torch.cuda.amp.autocast():
+                        out = model(images, targets, return_preds=True)
+                else:
+                    # MPS and other devices use CPU-based autocast for AMP
+                    with torch.amp.autocast(device_type='cpu'):
+                        out = model(images, targets, return_preds=True)
             else:
                 out = model(images, targets, return_preds=True)
             # Compute metric
@@ -143,7 +148,7 @@ def main(args):
     elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
         args.device = "mps"
         device = "mps"
-        pbar.write("Using MPS (Apple Silicon GPU) acceleration.")
+        pbar.write("Using MPS (Apple Silicon GPU) acceleration with CPU fallback for unsupported operations.")
     else:
         args.device = "cpu"
         device = "cpu"
@@ -153,7 +158,7 @@ def main(args):
     model = model.to(device)
 
     pbar.write("Running evaluation")
-    val_loss, exact_match, partial_match = evaluate(model, test_loader, batch_transforms, val_metric, amp=args.amp)
+    val_loss, exact_match, partial_match = evaluate(model, device, test_loader, batch_transforms, val_metric, amp=args.amp)
     pbar.write(f"Validation loss: {val_loss:.6} (Exact: {exact_match:.2%} | Partial: {partial_match:.2%})")
 
 
