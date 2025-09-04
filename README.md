@@ -103,13 +103,13 @@ python scripts/train_detection.py db_mobilenet_v3_large \
   --output_dir outputs/detection
 
 # 3. Evaluate detector
-python scripts/train_detection.py db_mobilenet_v3_large \
-  --train_path data/synth/train \
-  --val_path data/synth/test \
+python scripts/evaluate_detection.py db_mobilenet_v3_large \
+  --dataset data/synth/test \
   --batch_size 4 \
-  --input_size 1024 \
+  --size 1024 \
+  --keep_ratio \
+  --symmetric_pad \
   --rotation \
-  --test-only \
   --resume outputs/detection/mobilenet_large.pt
 
 # 4. Train recognizer (50 epochs)

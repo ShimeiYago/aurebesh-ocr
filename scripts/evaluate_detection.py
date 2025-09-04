@@ -19,8 +19,8 @@ if os.getenv("TQDM_SLACK_TOKEN") and os.getenv("TQDM_SLACK_CHANNEL"):
 else:
     from tqdm.auto import tqdm
 
-from doctr import datasets
 from doctr import transforms as T
+from doctr.datasets import DetectionDataset
 from doctr.models import detection
 from doctr.utils.metrics import LocalizationConfusion
 
@@ -37,15 +37,24 @@ def evaluate(model, val_loader, batch_transforms, val_metric, amp=False):
         # Move images to the same device as the model
         images = images.to(next(model.parameters()).device)
         images = batch_transforms(images)
-        targets = [{CLASS_NAME: t} for t in targets]
+        
+        # Convert targets for loss computation
+        # targets is already in the correct format: [{'words': ...}, ...]
+        # We need to rename 'words' to CLASS_NAME for loss computation
+        formatted_targets = []
+        for target in targets:
+            if 'words' in target:
+                formatted_targets.append({CLASS_NAME: target['words']})
+            else:
+                formatted_targets.append({CLASS_NAME: target})
+        
         if amp and next(model.parameters()).device.type == "cuda":
-            # AMP is only supported for CUDA devices
             with torch.cuda.amp.autocast():
-                out = model(images, targets, return_preds=True)
+                out = model(images, formatted_targets, return_preds=True)
         else:
-            # For MPS, CPU, or when AMP is disabled
-            out = model(images, targets, return_preds=True)
-        # Compute metric
+            out = model(images, formatted_targets, return_preds=True)
+        
+        # Compute metric using original targets
         loc_preds = out["preds"]
         for target, loc_pred in zip(targets, loc_preds):
             for boxes_gt, boxes_pred in zip(target.values(), loc_pred.values()):
@@ -87,30 +96,23 @@ def main(args):
     mean, std = model.cfg["mean"], model.cfg["std"]
 
     st = time.time()
-    ds = datasets.__dict__[args.dataset](
-        train=True,
-        download=True,
+
+    images_dir = os.path.join(args.dataset, "images")
+    labels_file = os.path.join(args.dataset, "labels.json")
+    
+    if not os.path.exists(images_dir):
+        raise FileNotFoundError(f"Images directory not found: {images_dir}")
+    if not os.path.exists(labels_file):
+        raise FileNotFoundError(f"Labels file not found: {labels_file}")
+    
+    ds = DetectionDataset(
+        img_folder=images_dir,
+        label_path=labels_file,
         use_polygons=args.rotation,
-        detection_task=True,
         sample_transforms=T.Resize(
             input_shape, preserve_aspect_ratio=args.keep_ratio, symmetric_pad=args.symmetric_pad
         ),
     )
-    # Monkeypatch
-    subfolder = ds.root.split("/")[-2:]
-    ds.root = str(Path(ds.root).parent.parent)
-    ds.data = [(os.path.join(*subfolder, name), target) for name, target in ds.data]
-    _ds = datasets.__dict__[args.dataset](
-        train=False,
-        download=True,
-        use_polygons=args.rotation,
-        detection_task=True,
-        sample_transforms=T.Resize(
-            input_shape, preserve_aspect_ratio=args.keep_ratio, symmetric_pad=args.symmetric_pad
-        ),
-    )
-    subfolder = _ds.root.split("/")[-2:]
-    ds.data.extend([(os.path.join(*subfolder, name), target) for name, target in _ds.data])
 
     test_loader = DataLoader(
         ds,
@@ -172,7 +174,7 @@ def parse_args():
     )
 
     parser.add_argument("arch", type=str, help="text-detection model to evaluate")
-    parser.add_argument("--dataset", type=str, default="FUNSD", help="Dataset to evaluate on")
+    parser.add_argument("--dataset", type=str, default=None, help="Path to dataset directory (e.g., data/synth/test)")
     parser.add_argument("-b", "--batch_size", type=int, default=2, help="batch size for evaluation")
     parser.add_argument("--device", default=None, type=int, help="device")
     parser.add_argument("--size", type=int, default=None, help="model input size, H = W")
