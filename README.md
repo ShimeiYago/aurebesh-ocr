@@ -103,14 +103,14 @@ python scripts/train_detector.py db_mobilenet_v3_large \
   --output_dir outputs/detector
 
 # 3. Evaluate detector
-python scripts/evaluate_detector.py db_mobilenet_v3_large \
-  --dataset data/synth/test \
+python scripts/train_detector.py db_mobilenet_v3_large \
+  --train_path data/synth/train \
+  --val_path data/synth/test \
   --batch_size 4 \
-  --size 1024 \
-  --keep_ratio \
-  --symmetric_pad \
+  --input_size 1024 \
   --rotation \
-  --resume outputs/detector/mobilenet_large.pt
+  --test-only \
+  --resume outputs/detection/mobilenet_large.pt
 
 # 4. Train recognizer (50 epochs)
 PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py crnn_mobilenet_v3_small \
@@ -133,12 +133,14 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py crnn_mobilenet_
   --output_dir outputs/recognizer
 
 # 5. Evaluate recognizer
-PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/evaluate_recognizer.py crnn_mobilenet_v3_small \
-  --vocab aurebesh \
-  --dataset data/synth/test/cropped \
+PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py crnn_mobilenet_v3_small \
+  --train_path data/synth/train/cropped \
+  --val_path data/synth/test/cropped \
   --batch_size 64 \
   --input_size 32 \
-  --resume outputs/recognizer/mobilenet_small.pt
+  --vocab aurebesh \
+  --test-only \
+  --resume outputs/recognition/mobilenet_small.pt
 
 # 6. Evaluate E2E Performance
 python scripts/evaluate.py \
