@@ -332,8 +332,6 @@ def main(args):
             f"Validation set loaded in {time.time() - st:.4}s ({len(val_set)} samples in {len(val_loader)} batches)"
         )
 
-    batch_transforms = Normalize(mean=(0.694, 0.695, 0.693), std=(0.299, 0.296, 0.301))
-
     # Load doctr model
     model = recognition.__dict__[args.arch](pretrained=args.pretrained, vocab=vocab)
 
@@ -341,6 +339,10 @@ def main(args):
     if isinstance(args.resume, str):
         pbar.write(f"Resuming {args.resume}")
         model.from_pretrained(args.resume)
+
+    # Use model's normalization values instead of hardcoded values
+    mean, std = model.cfg["mean"], model.cfg["std"]
+    batch_transforms = Normalize(mean=mean, std=std)
 
     # Backbone freezing
     if args.freeze_backbone:
