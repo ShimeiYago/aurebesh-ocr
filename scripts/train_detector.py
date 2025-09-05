@@ -31,7 +31,8 @@ from doctr import transforms as T
 from doctr.datasets import DetectionDataset
 from doctr.models import detection, login_to_hub, push_to_hf_hub
 from doctr.utils.metrics import LocalizationConfusion
-from scripts.utils.recognizer import EarlyStopper, plot_recorder, plot_samples
+from scripts.utils.detector import plot_recorder, plot_samples
+from scripts.utils.training import EarlyStopper
 
 
 def identity_transform(x):

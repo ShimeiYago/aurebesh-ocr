@@ -36,7 +36,8 @@ from doctr import transforms as T
 from doctr.datasets import VOCABS, RecognitionDataset, WordGenerator
 from doctr.models import login_to_hub, push_to_hf_hub, recognition
 from doctr.utils.metrics import TextMatch
-from utils.recognizer import EarlyStopper, plot_recorder, plot_samples
+from utils.recognizer import plot_recorder, plot_samples
+from utils.training import EarlyStopper
 from utils.config import get_charset
 
 
