@@ -85,7 +85,7 @@ data/real/annotations.json  # COCO polygons + transcripts per image
 python scripts/generate_dataset.py --num_images 30000 --max_workers 6
 
 # 2. Train detector (30 epochs)
-python scripts/train_detection.py db_mobilenet_v3_large \
+python scripts/train_detector.py db_mobilenet_v3_large \
   --name mobilenet_large \
   --train_path data/synth/train \
   --val_path data/synth/val \
@@ -100,20 +100,20 @@ python scripts/train_detection.py db_mobilenet_v3_large \
   --rotation \
   --eval-straight \
   --early-stop \
-  --output_dir outputs/detection
+  --output_dir outputs/detector
 
 # 3. Evaluate detector
-python scripts/evaluate_detection.py db_mobilenet_v3_large \
+python scripts/evaluate_detector.py db_mobilenet_v3_large \
   --dataset data/synth/test \
   --batch_size 4 \
   --size 1024 \
   --keep_ratio \
   --symmetric_pad \
   --rotation \
-  --resume outputs/detection/mobilenet_large.pt
+  --resume outputs/detector/mobilenet_large.pt
 
 # 4. Train recognizer (50 epochs)
-PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognition.py crnn_mobilenet_v3_small \
+PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py crnn_mobilenet_v3_small \
   --name mobilenet_small \
   --train_path data/synth/train/cropped \
   --val_path data/synth/val/cropped \
@@ -130,29 +130,29 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognition.py crnn_mobilenet
   --early-stop-delta 0.002 \
   --min-chars 1 \
   --max-chars 15 \
-  --output_dir outputs/recognition
+  --output_dir outputs/recognizer
 
 # 5. Evaluate recognizer
-PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/evaluate_recognition.py crnn_mobilenet_v3_small \
+PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/evaluate_recognizer.py crnn_mobilenet_v3_small \
   --vocab aurebesh \
   --dataset data/synth/test/cropped \
   --batch_size 64 \
   --input_size 32 \
-  --resume outputs/recognition/mobilenet_small.pt
+  --resume outputs/recognizer/mobilenet_small.pt
 
 # 6. Evaluate E2E Performance
 python scripts/evaluate.py \
   --input data/synth/test \
-  --det_path outputs/detection/mobilenet_large.pt \
-  --rec_path outputs/recognition/mobilenet_small.pt \
+  --det_path outputs/detector/mobilenet_large.pt \
+  --rec_path outputs/recognizer/mobilenet_small.pt \
   --config configs/inference.yaml \
   --save_path outputs/evaluate/results.json
 
 # 7. Run Inference
 python scripts/inference.py \
   --input_images data/real/images \
-  --det_path outputs/detection/mobilenet_large.pt \
-  --rec_path outputs/recognition/mobilenet_small.pt \
+  --det_path outputs/detector/mobilenet_large.pt \
+  --rec_path outputs/recognizer/mobilenet_small.pt \
   --config configs/inference.yaml \
   --save_dir outputs/inference
 ```
