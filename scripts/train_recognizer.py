@@ -540,60 +540,8 @@ def main(args):
         from torch.utils.tensorboard import SummaryWriter
         tb_writer = SummaryWriter(log_dir=str(Path(args.output_dir) / "tensorboard"))
 
-    # W&B
-    if rank == 0 and args.wb:
-        import wandb
-
-        run = wandb.init(
-            name=exp_name,
-            project="text-recognition",
-            config=config,
-        )
-
-        def wandb_log_at_step(train_loss=None, val_loss=None, lr=None):
-            wandb.log({
-                **({"train_loss_step": train_loss} if train_loss is not None else {}),
-                **({"val_loss_step": val_loss} if val_loss is not None else {}),
-                **({"step_lr": lr} if lr is not None else {}),
-            })
-
-    # ClearML
-    if rank == 0 and args.clearml:
-        from clearml import Logger, Task
-
-        task = Task.init(project_name="docTR/text-recognition", task_name=exp_name, reuse_last_task_id=False)
-        task.upload_artifact("config", config)
-
-        def clearml_log_at_step(train_loss=None, val_loss=None, lr=None):
-            logger = Logger.current_logger()
-            if train_loss is not None:
-                logger.report_scalar(
-                    title="Training Step Loss",
-                    series="train_loss_step",
-                    iteration=global_step,
-                    value=train_loss,
-                )
-            if val_loss is not None:
-                logger.report_scalar(
-                    title="Validation Step Loss",
-                    series="val_loss_step",
-                    iteration=global_step,
-                    value=val_loss,
-                )
-            if lr is not None:
-                logger.report_scalar(
-                    title="Step Learning Rate",
-                    series="step_lr",
-                    iteration=global_step,
-                    value=lr,
-                )
-
     def log_at_step(train_loss=None, val_loss=None, lr=None, tb_writer=None):
         global global_step
-        if args.wb:
-            wandb_log_at_step(train_loss, val_loss, lr)
-        if args.clearml:
-            clearml_log_at_step(train_loss, val_loss, lr)
         if tb_writer is not None:
             if train_loss is not None:
                 tb_writer.add_scalar("train_loss_step", train_loss, global_step)
@@ -649,37 +597,11 @@ def main(args):
                 tb_writer.add_scalar("exact_match", exact_match, epoch)
                 tb_writer.add_scalar("partial_match", partial_match, epoch)
 
-            # W&B
-            if args.wb:
-                wandb.log({
-                    "train_loss": train_loss,
-                    "val_loss": val_loss,
-                    "learning_rate": actual_lr,
-                    "exact_match": exact_match,
-                    "partial_match": partial_match,
-                })
-
-            # ClearML
-            if args.clearml:
-                from clearml import Logger
-
-                logger = Logger.current_logger()
-                logger.report_scalar(title="Training Loss", series="train_loss", value=train_loss, iteration=epoch)
-                logger.report_scalar(title="Validation Loss", series="val_loss", value=val_loss, iteration=epoch)
-                logger.report_scalar(title="Learning Rate", series="lr", value=actual_lr, iteration=epoch)
-                logger.report_scalar(title="Exact Match", series="exact_match", value=exact_match, iteration=epoch)
-                logger.report_scalar(
-                    title="Partial Match", series="partial_match", value=partial_match, iteration=epoch
-                )
-
             if args.early_stop and early_stopper.early_stop(val_loss):
                 pbar.write("Training halted early due to reaching patience limit.")
                 break
 
     if rank == 0:
-        if args.wb:
-            run.finish()
-
         if args.push_to_hub:
             push_to_hf_hub(model, exp_name, task="recognition", run_config=args)
 
@@ -758,8 +680,6 @@ def parse_args():
     parser.add_argument(
         "--show-samples", dest="show_samples", action="store_true", help="Display unormalized training samples"
     )
-    parser.add_argument("--wb", dest="wb", action="store_true", help="Log to Weights & Biases")
-    parser.add_argument("--clearml", dest="clearml", action="store_true", help="Log to ClearML")
     parser.add_argument("--push-to-hub", dest="push_to_hub", action="store_true", help="Push to Huggingface Hub")
     parser.add_argument(
         "--pretrained",
