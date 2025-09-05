@@ -26,7 +26,7 @@ class AurebeshDatasetGenerator:
         output_dir: Path,
         num_images: int = 20000,
         resolution: int = 1024,
-        split_ratio: Tuple[float, float, float] = (0.8, 0.1, 0.1),
+        split_ratio: Tuple[float, float, float] = (0.88, 0.1, 0.02),
         config_path: Optional[Path] = None,
         use_wordfreq: bool = True,
         wordfreq_limit: int = DEFAULT_WORDFREQ_LIMIT,
