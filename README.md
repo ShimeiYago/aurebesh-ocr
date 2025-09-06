@@ -143,7 +143,7 @@ python scripts/evaluate.py \
   --input data/synth/test \
   --det_path outputs/detector/weights.pt \
   --rec_path outputs/recognizer/mobilenet_small.pt \
-  --config configs/inference.yaml \
+  --post_process configs/post_process.yaml \
   --save_path outputs/evaluate/results.json
 
 # 7. Run Inference
@@ -151,7 +151,7 @@ python scripts/inference.py \
   --input_images data/real/images \
   --det_path outputs/detector/weights.pt \
   --rec_path outputs/recognizer/mobilenet_small.pt \
-  --config configs/inference.yaml \
+  --post_process configs/post_process.yaml \
   --save_dir outputs/inference
 ```
 

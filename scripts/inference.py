@@ -13,13 +13,13 @@ def parse_args():
     ap.add_argument("--input_images", required=True, help="dir or a single image path")
     ap.add_argument("--det_path", default="outputs/detection/mobilenet_large.pt", help=".pt path for detector")
     ap.add_argument("--rec_path", default="outputs/recognition/mobilenet_small.pt", help=".pt path for recognizer")
-    ap.add_argument("--config", default="configs/inference.yaml")
+    ap.add_argument("--post_process", default="configs/post_process.yaml")
     ap.add_argument("--save_dir", default="outputs/inference")
     return ap.parse_args()
 
 def main():
     args = parse_args()
-    cfg = load_config(args.config)
+    cfg = load_config(args.post_process)
     device = pick_device()
 
     det = load_detector(args.det_path, cfg, device)
