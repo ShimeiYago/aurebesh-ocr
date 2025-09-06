@@ -1,0 +1,7 @@
+detector:
+  arch: db_mobilenet_v3_large
+  input_size: 1024 # model input size, H=W
+
+recognizer:
+  arch: crnn_mobilenet_v3_small
+  input_size: 32

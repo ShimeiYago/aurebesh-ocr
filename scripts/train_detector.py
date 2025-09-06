@@ -31,8 +31,9 @@ from doctr import transforms as T
 from doctr.datasets import DetectionDataset
 from doctr.models import detection, login_to_hub, push_to_hf_hub
 from doctr.utils.metrics import LocalizationConfusion
-from scripts.utils.detector import plot_recorder, plot_samples
-from scripts.utils.training import EarlyStopper
+from utils.config import get_detector_config
+from utils.detector import plot_recorder, plot_samples
+from utils.training import EarlyStopper
 
 
 def identity_transform(x):
@@ -203,6 +204,11 @@ def evaluate(model, val_loader, batch_transforms, val_metric, args, amp=False, l
 
 
 def main(args):
+    # Load model configuration
+    detector_config = get_detector_config()
+    args.arch = detector_config.get('arch', 'db_mobilenet_v3_large')
+    args.input_size = detector_config.get('input_size', 1024)
+    
     # Detect distributed setup
     # variable is set by torchrun
     world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -570,7 +576,6 @@ def parse_args():
         type=int,
         help="Specify gpu device for single-gpu training. In destributed setting, this parameter is ignored",
     )
-    parser.add_argument("arch", type=str, help="text-detection model to train")
     parser.add_argument("--output_dir", type=str, default=".", help="path to save checkpoints and final model")
     parser.add_argument("--train_path", type=str, required=True, help="path to training data folder")
     parser.add_argument("--val_path", type=str, required=True, help="path to validation data folder")
@@ -580,7 +585,6 @@ def parse_args():
     parser.add_argument(
         "--save-interval-epoch", dest="save_interval_epoch", action="store_true", help="Save model every epoch"
     )
-    parser.add_argument("--input_size", type=int, default=1024, help="model input size, H = W")
     parser.add_argument("--lr", type=float, default=0.001, help="learning rate for the optimizer (Adam or AdamW)")
     parser.add_argument("--wd", "--weight-decay", default=0, type=float, help="weight decay", dest="weight_decay")
     parser.add_argument("-j", "--workers", type=int, default=None, help="number of workers used for dataloading")

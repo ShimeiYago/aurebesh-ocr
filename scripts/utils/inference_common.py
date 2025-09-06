@@ -13,14 +13,12 @@ from tqdm import tqdm
 
 # ── docTR
 from doctr.io import DocumentFile
-from doctr.models import ocr_predictor
-from doctr.models.detection import db_mobilenet_v3_large
+from doctr.models import ocr_predictor, detection, recognition
 from doctr.models.detection.differentiable_binarization.base import DBPostProcessor
-from doctr.models.recognition import crnn_mobilenet_v3_small
 
 from shapely.geometry import Polygon
 
-from .config import get_charset
+from .config import get_charset, get_model_config
 
 
 # -------------------------
@@ -29,6 +27,10 @@ from .config import get_charset
 def load_config(path: str) -> Dict[str, Any]:
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
+    
+    # モデル設定も読み込み
+    model_config = get_model_config()
+    cfg["model"] = model_config
     
     # 文字セット設定も読み込み
     vocab = get_charset()
@@ -48,7 +50,10 @@ def pick_device() -> torch.device:
 # Model loading
 # -------------------------
 def load_detector(det_pt: str, cfg: Dict[str, Any], device: torch.device):
-    det = db_mobilenet_v3_large(pretrained=False)
+    # モデル設定からアーキテクチャを取得
+    det_arch = cfg["model"]["detector"]["arch"]
+    det = detection.__dict__[det_arch](pretrained=False)
+    
     ckpt = torch.load(det_pt, map_location="cpu")
     state = ckpt.get("model", ckpt)  # references の保存形式と素の state_dict 両対応
     det.load_state_dict(state, strict=False)
@@ -70,8 +75,11 @@ def load_detector(det_pt: str, cfg: Dict[str, Any], device: torch.device):
     return det
 
 def load_recognizer(rec_pt: str, cfg: Dict[str, Any], device: torch.device):
+    # モデル設定からアーキテクチャを取得
+    rec_arch = cfg["model"]["recognizer"]["arch"]
     vocab = cfg["charset"]["vocab"]
-    reco = crnn_mobilenet_v3_small(pretrained=False, vocab=vocab)
+    reco = recognition.__dict__[rec_arch](pretrained=False, vocab=vocab)
+    
     ckpt = torch.load(rec_pt, map_location="cpu")
     state = ckpt.get("model", ckpt)
     reco.load_state_dict(state, strict=False)

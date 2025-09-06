@@ -36,9 +36,9 @@ from doctr import transforms as T
 from doctr.datasets import VOCABS, RecognitionDataset, WordGenerator
 from doctr.models import login_to_hub, push_to_hf_hub, recognition
 from doctr.utils.metrics import TextMatch
+from utils.config import get_recognizer_config, get_charset
 from utils.recognizer import plot_recorder, plot_samples
 from utils.training import EarlyStopper
-from utils.config import get_charset
 
 
 def record_lr(
@@ -212,6 +212,11 @@ def evaluate(model, device, val_loader, batch_transforms, val_metric, amp=False,
 
 
 def main(args):
+    # Load model configuration
+    recognizer_config = get_recognizer_config()
+    args.arch = recognizer_config.get('arch', 'crnn_mobilenet_v3_small')
+    args.input_size = recognizer_config.get('input_size', 32)
+    
     # Detect distributed setup
     # variable is set by torchrun
     world_size = int(os.environ.get("WORLD_SIZE", 1))
@@ -617,7 +622,6 @@ def parse_args():
     # DDP related args
     parser.add_argument("--backend", default="nccl", type=str, help="Backend to use for torch.distributed")
 
-    parser.add_argument("arch", type=str, help="text-recognition model to train")
     parser.add_argument("--output_dir", type=str, default=".", help="path to save checkpoints and final model")
     parser.add_argument("--train_path", type=str, default=None, help="path to train data folder(s)")
     parser.add_argument("--val_path", type=str, default=None, help="path to val data folder")
@@ -658,7 +662,6 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=10, help="number of epochs to train the model on")
     parser.add_argument("-b", "--batch_size", type=int, default=64, help="batch size for training")
 
-    parser.add_argument("--input_size", type=int, default=32, help="input size H for the model, W = 4*H")
     parser.add_argument(
         "--device",
         default=None,
