@@ -2,5 +2,4 @@ detector:
   arch: db_mobilenet_v3_large # input_size is fixed depending on the model (db_mobilenet_v3_large: 1024)
 
 recognizer:
-  arch: crnn_mobilenet_v3_small
-  input_size: 32
+  arch: crnn_mobilenet_v3_small # input_size is fixed depending on the model (crnn_mobilenet_v3_small: 32)

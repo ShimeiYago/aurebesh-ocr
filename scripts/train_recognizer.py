@@ -215,7 +215,6 @@ def main(args):
     # Load model configuration
     recognizer_config = get_recognizer_config()
     args.arch = recognizer_config.get('arch', 'crnn_mobilenet_v3_small')
-    args.input_size = recognizer_config.get('input_size', 32)
     
     # Detect distributed setup
     # variable is set by torchrun
@@ -273,6 +272,15 @@ def main(args):
         vocab = VOCABS[args.vocab]
     fonts = args.font.split(",")
 
+    # Validation dataset will be created after model loading to use model.cfg input_size
+
+    # Load doctr model
+    model = recognition.__dict__[args.arch](pretrained=args.pretrained, vocab=vocab)
+
+    # Get input_size from model cfg to ensure consistency with inference
+    args.input_size = model.cfg["input_shape"][1]  # Height from (C, H, W)
+
+    # Create validation dataset using model.cfg-derived input_size
     if rank == 0:
         # Load val data generator
         st = time.time()
@@ -337,9 +345,6 @@ def main(args):
         pbar.write(
             f"Validation set loaded in {time.time() - st:.4}s ({len(val_set)} samples in {len(val_loader)} batches)"
         )
-
-    # Load doctr model
-    model = recognition.__dict__[args.arch](pretrained=args.pretrained, vocab=vocab)
 
     # Resume weights
     if isinstance(args.resume, str):
