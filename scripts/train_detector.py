@@ -28,6 +28,7 @@ else:
     from tqdm.auto import tqdm
 
 from doctr import transforms as T
+from doctr.models import detection
 from doctr.datasets import DetectionDataset
 from doctr.models import detection, login_to_hub, push_to_hf_hub
 from doctr.utils.metrics import LocalizationConfusion
@@ -207,7 +208,8 @@ def main(args):
     # Load model configuration
     detector_config = get_detector_config()
     args.arch = detector_config.get('arch', 'db_mobilenet_v3_large')
-    args.input_size = detector_config.get('input_size', 1024)
+    
+    args.input_size = getattr(detection, args.arch)(pretrained=False).cfg["input_shape"][1]  # Extract H from (C, H, W)
     
     # Detect distributed setup
     # variable is set by torchrun

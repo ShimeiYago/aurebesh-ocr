@@ -89,7 +89,7 @@ def load_recognizer(rec_pt: str, cfg: Dict[str, Any], device: torch.device):
 
 def build_predictor(det, reco):
     # doctr の ocr_predictor を使用
-    return ocr_predictor(det_arch=det, reco_arch=reco, assume_straight_pages=False)
+    return ocr_predictor(det_arch=det, reco_arch=reco, preserve_aspect_ratio=True, symmetric_pad=True, assume_straight_pages=False)
 
 
 # -------------------------
