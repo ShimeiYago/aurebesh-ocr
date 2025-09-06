@@ -108,7 +108,7 @@ python scripts/train_detector.py \
   --batch_size 4 \
   --rotation \
   --test-only \
-  --resume outputs/detection/mobilenet_large.pt
+  --resume outputs/detection/weights.pt
 
 # 4. Train recognizer (50 epochs)
 PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py \
@@ -136,13 +136,13 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py \
   --batch_size 64 \
   --vocab aurebesh \
   --test-only \
-  --resume outputs/recognition/mobilenet_small.pt
+  --resume outputs/recognition/weights.pt
 
 # 6. Evaluate E2E Performance
 python scripts/evaluate.py \
   --input data/synth/test \
   --det_path outputs/detector/weights.pt \
-  --rec_path outputs/recognizer/mobilenet_small.pt \
+  --rec_path outputs/recognizer/weights.pt \
   --post_process configs/post_process.yaml \
   --save_path outputs/evaluate/results.json
 
@@ -150,7 +150,7 @@ python scripts/evaluate.py \
 python scripts/inference.py \
   --input_images data/real/images \
   --det_path outputs/detector/weights.pt \
-  --rec_path outputs/recognizer/mobilenet_small.pt \
+  --rec_path outputs/recognizer/weights.pt \
   --post_process configs/post_process.yaml \
   --save_dir outputs/inference
 ```
