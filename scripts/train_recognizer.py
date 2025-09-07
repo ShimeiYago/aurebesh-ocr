@@ -677,7 +677,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=0.001, help="learning rate for the optimizer (Adam or AdamW)")
     parser.add_argument("--wd", "--weight-decay", default=0, type=float, help="weight decay", dest="weight_decay")
     parser.add_argument("-j", "--workers", type=int, default=None, help="number of workers used for dataloading")
-    parser.add_argument("--resume", type=str, default=None, help="Path to your checkpoint")
+    parser.add_argument("--resume", type=str, default=None, help="Path to pretrained checkpoint (loads model weights only, does not resume training state)")
     parser.add_argument("--vocab", type=str, default="aurebesh", 
                         choices=["aurebesh", "french", "english", "portuguese", "arabic", "chinese", "japanese", "korean"], 
                         help="Vocab to be used for training (aurebesh uses custom charset from config)")
