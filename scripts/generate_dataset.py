@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import random
 import multiprocessing
 import shutil
@@ -26,6 +27,11 @@ class AurebeshDatasetGenerator:
         output_dir: Path,
         num_images: int = 20000,
         resolution: int = 1024,
+        min_width: int = 512,
+        max_width: int = 1536,
+        min_height: int = 512,
+        max_height: int = 1536,
+        aspect_ratio_variation: bool = True,
         split_ratio: Tuple[float, float, float] = (0.88, 0.1, 0.02),
         config_path: Optional[Path] = None,
         use_wordfreq: bool = True,
@@ -35,7 +41,12 @@ class AurebeshDatasetGenerator:
     ):
         self.output_dir = Path(output_dir)
         self.num_images = num_images
-        self.resolution = resolution
+        self.resolution = resolution  # Keep for backward compatibility
+        self.min_width = min_width
+        self.max_width = max_width
+        self.min_height = min_height
+        self.max_height = max_height
+        self.aspect_ratio_variation = aspect_ratio_variation
         self.split_ratio = split_ratio
         self.use_wordfreq = use_wordfreq
         self.debug = debug
@@ -189,6 +200,52 @@ class AurebeshDatasetGenerator:
         self.logger.info(f"Total vocabulary size: {len(vocabulary)} words")
         
         return vocabulary
+    
+    def _generate_random_image_size(self) -> Tuple[int, int]:
+        """Generate random image size with various aspect ratios."""
+        if not self.aspect_ratio_variation:
+            # Use fixed square resolution for backward compatibility
+            return (self.resolution, self.resolution)
+        
+        # Define common aspect ratios
+        aspect_ratios = [
+            (1, 1),     # Square
+            (4, 3),     # Standard photo
+            (3, 2),     # Classic photography
+            (16, 9),    # Widescreen
+            (5, 4),     # Medium format
+            (3, 4),     # Portrait 4:3
+            (2, 3),     # Portrait 3:2
+            (9, 16),    # Portrait widescreen
+            (21, 9),    # Ultra-wide
+            (9, 21),    # Ultra-tall
+        ]
+        
+        # Choose random aspect ratio
+        aspect_w, aspect_h = random.choice(aspect_ratios)
+        
+        # Calculate size with maximum dimension fixed at resolution (1024)
+        max_long_side = self.resolution  # 1024
+        
+        if aspect_w >= aspect_h:
+            # Landscape or square - width is the longer side
+            width = max_long_side
+            height = int(width * aspect_h / aspect_w)
+        else:
+            # Portrait - height is the longer side
+            height = max_long_side
+            width = int(height * aspect_w / aspect_h)
+        
+        # Ensure minimum dimensions
+        min_dimension = 256  # Set reasonable minimum
+        if width < min_dimension:
+            width = min_dimension
+            height = int(width * aspect_h / aspect_w)
+        if height < min_dimension:
+            height = min_dimension
+            width = int(height * aspect_w / aspect_h)
+        
+        return (width, height)
     
     def _sample_font(self) -> Path:
         """Sample font based on configured probabilities."""
@@ -905,24 +962,28 @@ class AurebeshDatasetGenerator:
             if block_idx > 0:
                 font_path = self._sample_font()
             
-            # Setup font with varying sizes - adapt based on number of blocks
+            # Setup font with varying sizes - adapt based on number of blocks and image size
+            # Base font size on smaller image dimension
+            base_font_scale = min(image_size[0], image_size[1]) / 1024.0  # Scale relative to 1024px
+            
             if num_text_blocks > 7:
                 # Many blocks - use smaller fonts
-                max_font_size = 50
-                min_font_size = 20
+                max_font_size = max(20, int(50 * base_font_scale))
+                min_font_size = max(15, int(20 * base_font_scale))
             elif num_text_blocks > 4:
                 # Medium number of blocks
-                max_font_size = 65
-                min_font_size = 25
+                max_font_size = max(25, int(65 * base_font_scale))
+                min_font_size = max(18, int(25 * base_font_scale))
             else:
                 # Few blocks - can use larger fonts
-                max_font_size = 80
-                min_font_size = 30
+                max_font_size = max(30, int(80 * base_font_scale))
+                min_font_size = max(20, int(30 * base_font_scale))
             
             font_size = random.randint(min_font_size, max_font_size)
             
             # Try to find a font size that fits with proper margins
-            margin = 150  # Increased margin for safety to prevent text cutoff after augmentation
+            # Dynamic margin based on image size - use proportion of smaller dimension
+            margin = max(50, int(min(image_size[0], image_size[1]) * 0.1))  # 10% of smaller dimension, min 50px
             max_rotation_angle = 15  # Maximum rotation in degrees
             
             for size_attempt in range(10):  # More attempts to find suitable font size
@@ -966,7 +1027,6 @@ class AurebeshDatasetGenerator:
                     text_height = bbox[3] - bbox[1]
                 
                 # Calculate maximum dimensions considering potential rotation
-                import math
                 angle_rad = math.radians(max_rotation_angle)
                 cos_a = abs(math.cos(angle_rad))
                 sin_a = abs(math.sin(angle_rad))
@@ -1534,9 +1594,12 @@ class AurebeshDatasetGenerator:
                 # Sample font
                 font_path = self._sample_font()
                 
+                # Generate random image size
+                image_size = self._generate_random_image_size()
+                
                 # Render text on image
                 image, text_annotations = self._render_text_on_image(
-                    text, font_path, (self.resolution, self.resolution)
+                    text, font_path, image_size
                 )
                 
                 attempts += 1
@@ -1994,9 +2057,12 @@ class AurebeshDatasetGenerator:
                     # Sample font
                     font_path = self._sample_font()
                     
+                    # Generate random image size
+                    image_size = self._generate_random_image_size()
+                    
                     # Render text on image
                     image, text_annotations = self._render_text_on_image(
-                        text, font_path, (self.resolution, self.resolution)
+                        text, font_path, image_size
                     )
                     
                     attempts += 1
@@ -2235,7 +2301,12 @@ def main():
     parser = argparse.ArgumentParser(description="Generate synthetic Aurebesh dataset")
     parser.add_argument("--num_images", type=int, default=20000, help="Total images to generate")
     parser.add_argument("--output_dir", type=Path, default="data/synth", help="Output directory")
-    parser.add_argument("--resolution", type=int, default=1024, help="Image resolution")
+    parser.add_argument("--resolution", type=int, default=1024, help="Maximum dimension for images (long side)")
+    parser.add_argument("--min_width", type=int, default=512, help="Minimum image width (legacy parameter, not used with aspect_ratio_variation)")
+    parser.add_argument("--max_width", type=int, default=1536, help="Maximum image width (legacy parameter, not used with aspect_ratio_variation)")
+    parser.add_argument("--min_height", type=int, default=512, help="Minimum image height (legacy parameter, not used with aspect_ratio_variation)")
+    parser.add_argument("--max_height", type=int, default=1536, help="Maximum image height (legacy parameter, not used with aspect_ratio_variation)")
+    parser.add_argument("--no_aspect_ratio_variation", action="store_true", help="Disable aspect ratio variation (use square images)")
     parser.add_argument("--split_ratio", nargs=3, type=float, default=[0.8, 0.1, 0.1], 
                        help="Train/val/test split ratio")
     parser.add_argument("--config", type=Path, help="Dataset config path")
@@ -2251,6 +2322,11 @@ def main():
         output_dir=args.output_dir,
         num_images=args.num_images,
         resolution=args.resolution,
+        min_width=args.min_width,
+        max_width=args.max_width,
+        min_height=args.min_height,
+        max_height=args.max_height,
+        aspect_ratio_variation=not args.no_aspect_ratio_variation,
         split_ratio=args.split_ratio,
         config_path=args.config,
         use_wordfreq=not args.no_wordfreq,
