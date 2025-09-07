@@ -15,6 +15,8 @@ from tqdm import tqdm
 from doctr.io import DocumentFile
 from doctr.models import ocr_predictor, detection, recognition
 from doctr.models.detection.differentiable_binarization.base import DBPostProcessor
+from doctr.models.detection.zoo import detection_predictor
+from doctr.utils.geometry import detach_scores
 
 from shapely.geometry import Polygon
 
@@ -97,6 +99,106 @@ def build_predictor(det, reco):
         assume_straight_pages=False,
         disable_page_orientation=True,  # pytorchのOCRPredictor内でassume_horizontal=Trueにするために必要
     )
+
+def extract_loc(det, pages: List[np.ndarray]) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """
+    detectorからpure feature mapを抽出する関数
+    
+    Args:
+        det: detection model (load_detector で作成したもの)
+        pages: list of images as numpy arrays (H, W, 3)
+    
+    Returns:
+        Tuple of (loc_preds, out_maps)
+        - loc_preds: 正規化座標でのdetection結果
+        - out_maps: raw feature maps from detector
+    """
+    # Dimension check (OCRPredictorと同じ)
+    if any(page.ndim != 3 for page in pages):
+        raise ValueError("incorrect input shape: all pages are expected to be multi-channel 2D images.")
+    
+    # DetectionPredictorを直接使って推論
+    # detection_predictorラッパーを作成（OCRPredictorと同じ設定）
+    det_predictor = detection_predictor(
+        det,
+        batch_size=2,  # デフォルト値
+        assume_straight_pages=False,
+        preserve_aspect_ratio=True,
+        symmetric_pad=True,
+    )
+    
+    # Detection実行 (OCRPredictorのL82相当)
+    loc_preds, out_maps = det_predictor(pages, return_maps=True)
+    
+    return loc_preds, out_maps
+
+def loc_to_polygons(loc_preds: List[Dict], origin_page_shapes: List[Tuple[int, int]]) -> List[np.ndarray]:
+    """
+    feature mapから最終的なpolygon座標を計算する関数
+    
+    Args:
+        loc_preds: detection predictorからの出力（辞書形式）
+        origin_page_shapes: 元画像のサイズ [(height, width), ...]
+    
+    Returns:
+        List of polygon coordinates for each page (pixel coordinates)
+    """
+    # OCRPredictorのL105-109相当: 辞書形式から座標を抽出
+    assert all(len(loc_pred) == 1 for loc_pred in loc_preds), (
+        "Detection Model should output only one class"
+    )
+    
+    loc_preds_processed = [list(loc_pred.values())[0] for loc_pred in loc_preds]
+    
+    # objectness scoresを分離 (OCRPredictorのL110相当)
+    loc_preds_processed, objectness_scores = detach_scores(loc_preds_processed)
+    
+    # 正規化座標（0-1）をピクセル座標に変換
+    result_polygons = []
+    for page_polygons, (orig_h, orig_w) in zip(loc_preds_processed, origin_page_shapes):
+        # ピクセル座標に変換
+        pixel_polygons = []
+        for poly in page_polygons:
+            # poly は (4, 2) の形状: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+            pixel_poly = np.array([[int(x * orig_w), int(y * orig_h)] for x, y in poly])
+            pixel_polygons.append(pixel_poly)
+        
+        if pixel_polygons:
+            result_polygons.append(np.array(pixel_polygons))
+        else:
+            result_polygons.append(np.empty((0, 4, 2), dtype=np.int32))
+    
+    return result_polygons
+
+def run_detection_only(det, image_path: str) -> List[np.ndarray]:
+    """
+    画像パスからdetectorのみを実行してpolygon座標を返す関数
+    build_predictorと同じ画像前処理（DocumentFile）を使用
+    内部で2つの関数を呼び出す：extract_loc + loc_to_polygons
+    
+    Args:
+        det: detection model (load_detector で作成したもの)
+        image_path: 画像ファイルのパス
+    
+    Returns:
+        List of polygon coordinates for each page
+        Each element is numpy array of shape (N, 4, 2) for N detections
+        Format: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]] per detection
+        座標はピクセル座標（整数）で返される
+    """
+    # build_predictorと同じ画像前処理を使用
+    pages = DocumentFile.from_images(image_path)
+    
+    # 元の画像サイズを保存
+    origin_page_shapes = [page.shape[:2] for page in pages]
+
+    # 1. location predictionsを抽出
+    loc_preds, _ = extract_loc(det, pages)
+
+    # 2. location predictionsからpolygonを計算
+    result_polygons = loc_to_polygons(loc_preds, origin_page_shapes)
+
+    return result_polygons
 
 
 # -------------------------
