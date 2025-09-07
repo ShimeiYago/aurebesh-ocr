@@ -76,8 +76,14 @@ class AurebeshDatasetGenerator:
         self.backgrounds = list(self.bg_dir.glob("*.jpg")) + list(self.bg_dir.glob("*.png"))
         self.charset = get_charset()
         
-        # Setup logger
+        # Setup logger first
         self.logger = setup_logger("generate_dataset", self.output_dir / "logs")
+        
+        # Split backgrounds according to split_ratio to avoid overlap between train/val/test
+        self._split_backgrounds()
+        
+        # Current split being generated (will be set during generation)
+        self.current_split = None
         
         # Setup word vocabulary
         self.word_list = self._setup_vocabulary(custom_words)
@@ -94,6 +100,61 @@ class AurebeshDatasetGenerator:
                       list((self.font_dir / 'variant').glob('*.otf'))
         }
         return fonts
+    
+    def _split_backgrounds(self):
+        """Split background images according to split_ratio to avoid overlap between train/val/test."""
+        if not self.backgrounds:
+            self.logger.warning("No background images found!")
+            self.split_backgrounds = {'train': [], 'val': [], 'test': []}
+            return
+        
+        # Shuffle backgrounds for random split
+        import random
+        shuffled_backgrounds = self.backgrounds.copy()
+        random.shuffle(shuffled_backgrounds)
+        
+        total_backgrounds = len(shuffled_backgrounds)
+        self.logger.info(f"Splitting {total_backgrounds} background images according to split ratio {self.split_ratio}")
+        
+        # Calculate split sizes
+        train_bg_size = int(total_backgrounds * self.split_ratio[0])
+        val_bg_size = int(total_backgrounds * self.split_ratio[1])
+        test_bg_size = total_backgrounds - train_bg_size - val_bg_size
+        
+        # Ensure each split has at least one background (if any backgrounds exist)
+        if total_backgrounds >= 3:
+            train_bg_size = max(train_bg_size, 1)
+            val_bg_size = max(val_bg_size, 1)
+            test_bg_size = max(test_bg_size, 1)
+            
+            # Adjust if necessary to maintain total
+            if train_bg_size + val_bg_size + test_bg_size > total_backgrounds:
+                excess = train_bg_size + val_bg_size + test_bg_size - total_backgrounds
+                if train_bg_size > 1:
+                    train_bg_size -= excess
+                elif val_bg_size > 1:
+                    val_bg_size -= excess
+                else:
+                    test_bg_size -= excess
+        
+        # Split backgrounds
+        train_end = train_bg_size
+        val_end = train_end + val_bg_size
+        
+        self.split_backgrounds = {
+            'train': shuffled_backgrounds[:train_end],
+            'val': shuffled_backgrounds[train_end:val_end],
+            'test': shuffled_backgrounds[val_end:]
+        }
+        
+        self.logger.info(f"Background split: train={len(self.split_backgrounds['train'])}, "
+                        f"val={len(self.split_backgrounds['val'])}, "
+                        f"test={len(self.split_backgrounds['test'])}")
+        
+        # Warn if any split has no backgrounds
+        for split_name, bg_list in self.split_backgrounds.items():
+            if not bg_list:
+                self.logger.warning(f"No background images assigned to {split_name} split!")
     
     def _setup_augmentations(self) -> A.Compose:
         """Setup albumentations pipeline with bbox transformation support."""
@@ -465,8 +526,26 @@ class AurebeshDatasetGenerator:
                 # Fallback to solid color
                 return self._generate_solid_color_bg(size)
         else:
-            # Use real background
-            bg_path = random.choice(self.backgrounds)
+            # Use real background from current split
+            if self.current_split and self.current_split in self.split_backgrounds:
+                current_split_backgrounds = self.split_backgrounds[self.current_split]
+                if current_split_backgrounds:
+                    bg_path = random.choice(current_split_backgrounds)
+                else:
+                    # Fallback to any background if current split has none
+                    self.logger.warning(f"No backgrounds for {self.current_split}, using fallback")
+                    if self.backgrounds:
+                        bg_path = random.choice(self.backgrounds)
+                    else:
+                        # Generate synthetic if no backgrounds at all
+                        return self._generate_solid_color_bg(size)
+            else:
+                # Fallback if no current split set
+                if self.backgrounds:
+                    bg_path = random.choice(self.backgrounds)
+                else:
+                    return self._generate_solid_color_bg(size)
+            
             bg = Image.open(bg_path).convert('RGB')
             bg = bg.resize(size, Image.Resampling.LANCZOS)
             return bg
@@ -1556,6 +1635,12 @@ class AurebeshDatasetGenerator:
         temp_dir = task_config['temp_dir']
         start_counter = task_config['start_counter']
         padding_format = task_config['padding_format']
+        split_backgrounds = task_config.get('split_backgrounds', [])
+        
+        # Set current split and its backgrounds for this worker
+        self.current_split = split_name
+        if split_backgrounds:
+            self.split_backgrounds[split_name] = split_backgrounds
         
         # Setup worker-specific directories
         worker_temp_dir = Path(temp_dir) / f"worker_{worker_id}"
@@ -1942,7 +2027,8 @@ class AurebeshDatasetGenerator:
                         'worker_id': worker_id,
                         'temp_dir': str(temp_base_dir / split_name),
                         'start_counter': current_counter,
-                        'padding_format': padding_format
+                        'padding_format': padding_format,
+                        'split_backgrounds': self.split_backgrounds.get(split_name, [])
                     }
                     tasks.append(task_config)
                     current_counter += worker_images
@@ -2025,6 +2111,9 @@ class AurebeshDatasetGenerator:
         
         for split_name, split_size in splits.items():
             self.logger.info(f"Generating {split_name} split with {split_size} images")
+            
+            # Set current split for background selection
+            self.current_split = split_name
             
             # Setup directories
             split_dir = ensure_dir(self.output_dir / split_name)
@@ -2307,7 +2396,7 @@ def main():
     parser.add_argument("--min_height", type=int, default=512, help="Minimum image height (legacy parameter, not used with aspect_ratio_variation)")
     parser.add_argument("--max_height", type=int, default=1536, help="Maximum image height (legacy parameter, not used with aspect_ratio_variation)")
     parser.add_argument("--no_aspect_ratio_variation", action="store_true", help="Disable aspect ratio variation (use square images)")
-    parser.add_argument("--split_ratio", nargs=3, type=float, default=[0.8, 0.1, 0.1], 
+    parser.add_argument("--split_ratio", nargs=3, type=float, default=[0.88, 0.1, 0.02], 
                        help="Train/val/test split ratio")
     parser.add_argument("--config", type=Path, help="Dataset config path")
     parser.add_argument("--no_wordfreq", action="store_true", help="Disable wordfreq vocabulary")
