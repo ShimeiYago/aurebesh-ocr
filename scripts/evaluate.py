@@ -15,8 +15,8 @@ IOU_THRESH = 0.5
 def parse_args():
     ap = argparse.ArgumentParser(description="OCR end-to-end evaluation (det+rec)")
     ap.add_argument("--input", required=True, help="dataset root containing images/ and labels.json")
-    ap.add_argument("--det_path", default="outputs/detection/mobilenet_large.pt", help=".pt path for detector")
-    ap.add_argument("--rec_path", default="outputs/recognition/mobilenet_small.pt", help=".pt path for recognizer")
+    ap.add_argument("--det_path", default="outputs/detector/weights.pt", help=".pt path for detector")
+    ap.add_argument("--rec_path", default="outputs/recognizer/weights.pt", help=".pt path for recognizer")
     ap.add_argument("--post_process", default="configs/post_process.yaml")
     ap.add_argument("--save_path", default="outputs/evaluate/results.json", help="File path to save results")
     return ap.parse_args()

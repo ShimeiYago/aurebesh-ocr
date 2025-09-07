@@ -11,8 +11,8 @@ from utils.inference_common import (
 def parse_args():
     ap = argparse.ArgumentParser(description="OCR inference (det+rec)")
     ap.add_argument("--input_images", required=True, help="dir or a single image path")
-    ap.add_argument("--det_path", default="outputs/detection/mobilenet_large.pt", help=".pt path for detector")
-    ap.add_argument("--rec_path", default="outputs/recognition/mobilenet_small.pt", help=".pt path for recognizer")
+    ap.add_argument("--det_path", default="outputs/detector/weights.pt", help=".pt path for detector")
+    ap.add_argument("--rec_path", default="outputs/recognizer/weights.pt", help=".pt path for recognizer")
     ap.add_argument("--post_process", default="configs/post_process.yaml")
     ap.add_argument("--save_dir", default="outputs/inference")
     return ap.parse_args()
