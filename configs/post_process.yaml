@@ -1,8 +1,10 @@
 detector:
-  # DBPostProcessor のしきい値
+  # detectorが出力するボックスの形状を調整
   bin_thresh: 0.3    # doctrのデフォルトは 0.3
-  box_thresh: 0.5    # doctrのデフォルトは 0.1
   unclip_ratio: 1.3  # doctrのデフォルトは 1.5
+
+  # しきい値（信頼度が低い検出結果を除外）
+  box_thresh: 0.1    # doctrのデフォルトは 0.1
 
 recognizer:
   # 後段フィルタ

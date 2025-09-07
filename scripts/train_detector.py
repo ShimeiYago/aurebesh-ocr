@@ -36,8 +36,9 @@ from doctr import transforms as T
 from doctr.models import detection
 from doctr.datasets import DetectionDataset
 from doctr.models import detection, login_to_hub, push_to_hf_hub
+from doctr.models.detection.differentiable_binarization.base import DBPostProcessor
 from doctr.utils.metrics import LocalizationConfusion
-from utils.config import get_detector_config
+from utils.config import get_detector_config, get_post_process_config
 from utils.detector import plot_recorder, plot_samples
 from utils.training import EarlyStopper
 
@@ -317,6 +318,19 @@ def main(args):
         assume_straight_pages=not args.rotation,
         class_names=class_names,
     )
+    
+    # Configure postprocessor with external parameters
+    post_process_config = get_post_process_config()
+    detector_pp_config = post_process_config.get('detector', {})
+    
+    if detector_pp_config:
+        pbar.write(f"Configuring postprocessor with: {detector_pp_config}")
+        model.postprocessor = DBPostProcessor(
+            bin_thresh=detector_pp_config.get('bin_thresh', 0.3),
+            box_thresh=detector_pp_config.get('box_thresh', 0.1),
+            assume_straight_pages=not args.rotation
+        )
+        model.postprocessor.unclip_ratio = detector_pp_config.get('unclip_ratio', 1.5)
     
     # Use normalization values from model config for consistency
     mean, std = model.cfg["mean"], model.cfg["std"]

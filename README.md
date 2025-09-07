@@ -108,7 +108,7 @@ python scripts/train_detector.py \
   --batch_size 4 \
   --rotation \
   --test-only \
-  --resume outputs/detection/weights.pt
+  --resume outputs/detector/weights.pt
 
 # 4. Train recognizer (50 epochs)
 PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py \
@@ -136,7 +136,7 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py \
   --batch_size 64 \
   --vocab aurebesh \
   --test-only \
-  --resume outputs/recognition/weights.pt
+  --resume outputs/recognizer/weights.pt
 
 # 6. Evaluate E2E Performance
 python scripts/evaluate.py \

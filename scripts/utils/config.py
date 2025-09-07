@@ -47,3 +47,12 @@ def get_recognizer_config(model_config_path: Optional[Path] = None) -> Dict[str,
     """Get recognizer configuration.""" 
     model_config = get_model_config(model_config_path)
     return model_config.get('recognizer', {})
+
+
+def get_post_process_config(post_process_config_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Load post-processing configuration from YAML file."""
+    if post_process_config_path is None:
+        post_process_config_path = Path(__file__).parent.parent.parent / "configs" / "post_process.yaml"
+    
+    config = load_config(post_process_config_path)
+    return config
