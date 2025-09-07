@@ -9,10 +9,15 @@ import logging
 import multiprocessing
 import os
 import time
+import warnings
 from pathlib import Path
 
 import numpy as np
 import torch
+
+# Suppress numerical warnings from DocTR's internal calculations
+warnings.filterwarnings("ignore", category=RuntimeWarning, message="divide by zero encountered in divide")
+warnings.filterwarnings("ignore", category=RuntimeWarning, message="invalid value encountered in divide")
 
 # The following import is required for DDP
 import torch.distributed as dist
