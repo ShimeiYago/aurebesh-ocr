@@ -1056,7 +1056,7 @@ class AurebeshDatasetGenerator:
                 min_font_size = max(18, int(25 * base_font_scale))
             else:
                 # Few blocks - can use larger fonts
-                max_font_size = max(30, int(80 * base_font_scale))
+                max_font_size = max(30, int(200 * base_font_scale))
                 min_font_size = max(20, int(30 * base_font_scale))
             
             font_size = random.randint(min_font_size, max_font_size)
