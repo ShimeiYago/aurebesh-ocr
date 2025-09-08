@@ -110,6 +110,11 @@ python scripts/train_detector.py \
   --test-only \
   --resume outputs/detector/weights.pt
 
+# Optional: Grid search best bin_thresh and unclip_ratio for detector
+python scripts/optimize_detector.py \
+  --input data/synth/test \
+  --det_path outputs/detector/weights.pt
+
 # 4. Train recognizer (50 epochs)
 PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py \
   --name weights \
