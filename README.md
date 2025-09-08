@@ -143,19 +143,53 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py \
   --test-only \
   --resume outputs/recognizer/weights.pt
 
-# 6. Evaluate E2E Performance
+# 6. Generate detector-noise cropped dataset for advanced recognizer training
+python scripts/generate_detector_cropped_dataset.py \
+  --input data/synth/train \
+  --det_path outputs/detector/weights.pt \
+  --config configs/post_process.yaml \
+  --iou_threshold 0.5 \
+  --output_suffix det-cropped
+
+python scripts/generate_detector_cropped_dataset.py \
+  --input data/synth/val \
+  --det_path outputs/detector/weights.pt \
+  --config configs/post_process.yaml \
+  --iou_threshold 0.5 \
+  --output_suffix det-cropped
+
+# 7. Train advanced recognizer with detector-noise data
+PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py \
+  --name weights \
+  --train_path data/synth/train/det-cropped \
+  --val_path data/synth/val/det-cropped \
+  --epochs 50 \
+  --batch_size 64 \
+  --lr 0.003 \
+  --optim adamw \
+  --wd 0.0001 \
+  --sched cosine \
+  --vocab aurebesh \
+  --early-stop \
+  --early-stop-epochs 10 \
+  --early-stop-delta 0.002 \
+  --min-chars 1 \
+  --max-chars 15 \
+  --output_dir outputs/advanced-recognizer
+
+# 8. Evaluate E2E Performance
 python scripts/evaluate.py \
   --input data/synth/test \
   --det_path outputs/detector/weights.pt \
-  --rec_path outputs/recognizer/weights.pt \
+  --rec_path outputs/advanced-recognizer/weights.pt \
   --post_process configs/post_process.yaml \
   --save_path outputs/evaluate/results.json
 
-# 7. Run Inference
+# 9. Run Inference
 python scripts/inference.py \
   --input_images data/real/images \
   --det_path outputs/detector/weights.pt \
-  --rec_path outputs/recognizer/weights.pt \
+  --rec_path outputs/advanced-recognizer/weights.pt \
   --post_process configs/post_process.yaml \
   --save_dir outputs/inference
 ```

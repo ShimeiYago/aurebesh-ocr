@@ -170,6 +170,38 @@ def loc_to_polygons(loc_preds: List[Dict], origin_page_shapes: List[Tuple[int, i
     
     return result_polygons
 
+def normalize_polygon_order(polygon: np.ndarray) -> np.ndarray:
+    """
+    Polygon座標を左上から時計回りの順序に正規化する
+    
+    Args:
+        polygon: (4, 2) shaped array of polygon coordinates
+    
+    Returns:
+        Normalized polygon in order: top-left, top-right, bottom-right, bottom-left
+    """
+    # 重心を計算
+    center = np.mean(polygon, axis=0)
+    
+    # 各点から重心への角度を計算
+    angles = np.arctan2(polygon[:, 1] - center[1], polygon[:, 0] - center[0])
+    
+    # 角度順でソート（左上から時計回り）
+    sorted_indices = np.argsort(angles)
+    
+    # 最初の点が最も左上に近い点になるように調整
+    # 各点のy座標 + x座標の和が最小の点を開始点とする
+    scores = polygon[:, 0] + polygon[:, 1]  # top-left bias
+    start_idx = np.argmin(scores)
+    
+    # start_idxを含む並び順に調整
+    if start_idx in sorted_indices:
+        start_pos = np.where(sorted_indices == start_idx)[0][0]
+        sorted_indices = np.roll(sorted_indices, -start_pos)
+    
+    return polygon[sorted_indices]
+
+
 def run_detection_only(det, image_path: str) -> List[np.ndarray]:
     """
     画像パスからdetectorのみを実行してpolygon座標を返す関数
@@ -184,7 +216,7 @@ def run_detection_only(det, image_path: str) -> List[np.ndarray]:
         List of polygon coordinates for each page
         Each element is numpy array of shape (N, 4, 2) for N detections
         Format: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]] per detection
-        座標はピクセル座標（整数）で返される
+        座標はピクセル座標（整数）で返され、左上から時計回りの順序に正規化される
     """
     # build_predictorと同じ画像前処理を使用
     pages = DocumentFile.from_images(image_path)
@@ -197,8 +229,20 @@ def run_detection_only(det, image_path: str) -> List[np.ndarray]:
 
     # 2. location predictionsからpolygonを計算
     result_polygons = loc_to_polygons(loc_preds, origin_page_shapes)
-
-    return result_polygons
+    
+    # 3. 各polygonの座標順序を正規化
+    normalized_result_polygons = []
+    for page_polygons in result_polygons:
+        if len(page_polygons) > 0:
+            normalized_polygons = []
+            for polygon in page_polygons:
+                normalized_poly = normalize_polygon_order(polygon)
+                normalized_polygons.append(normalized_poly)
+            normalized_result_polygons.append(np.array(normalized_polygons))
+        else:
+            normalized_result_polygons.append(page_polygons)
+    
+    return normalized_result_polygons
 
 
 # -------------------------
