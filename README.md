@@ -175,7 +175,8 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py \
   --early-stop-delta 0.002 \
   --min-chars 1 \
   --max-chars 15 \
-  --output_dir outputs/advanced-recognizer
+  --output_dir outputs/advanced-recognizer \
+  --resume outputs/recognizer/weights.pt
 
 # 8. Evaluate E2E Performance
 python scripts/evaluate.py \
