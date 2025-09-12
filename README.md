@@ -111,7 +111,7 @@ python scripts/train_detector.py \
   --resume outputs/detector/weights.pt
 
 # Optional: Grid search best bin_thresh and unclip_ratio for detector
-python scripts/optimize_detector.py \
+python scripts/search_optimized_detector_params.py \
   --input data/synth/test \
   --det_path outputs/detector/weights.pt
 
@@ -144,15 +144,17 @@ PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py \
   --resume outputs/recognizer/weights.pt
 
 # 6. Generate detector-noise cropped dataset for advanced recognizer training
+python scripts/generate_dataset.py --num_images 60000 --max_workers 6 --output_dir data/synth2
+
 python scripts/generate_detector_cropped_dataset.py \
-  --input data/synth/train \
+  --input data/synth2/train \
   --det_path outputs/detector/weights.pt \
   --config configs/post_process.yaml \
   --iou_threshold 0.5 \
   --output_suffix det-cropped
 
 python scripts/generate_detector_cropped_dataset.py \
-  --input data/synth/val \
+  --input data/synth2/val \
   --det_path outputs/detector/weights.pt \
   --config configs/post_process.yaml \
   --iou_threshold 0.5 \
@@ -161,8 +163,8 @@ python scripts/generate_detector_cropped_dataset.py \
 # 7. Train advanced recognizer with detector-noise data
 PYTORCH_ENABLE_MPS_FALLBACK=1 python scripts/train_recognizer.py \
   --name weights \
-  --train_path data/synth/train/det-cropped \
-  --val_path data/synth/val/det-cropped \
+  --train_path data/synth2/train/det-cropped \
+  --val_path data/synth2/val/det-cropped \
   --epochs 50 \
   --batch_size 64 \
   --lr 0.003 \

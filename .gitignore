@@ -1,8 +1,7 @@
 # Project specific
 assets/backgrounds/
 assets/fonts/
-data/real/
-data/synth/
+data/
 outputs/
 .python-version
 .vscode/
