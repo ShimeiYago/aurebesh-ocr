@@ -97,10 +97,8 @@ def main():
     # det-onlyモードでない場合のみrecognizerとpredictorを作成
     if not getattr(args, 'det_only', False):
         reco = load_recognizer(args.rec_path, cfg, device)
-        predictor = build_predictor(det, reco)
     else:
         reco = None
-        predictor = None
 
     labels = read_labels_json(args.input)
     img_dir = os.path.join(args.input, "images")
@@ -136,7 +134,7 @@ def main():
             matches, fp_idx, fn_idx = match_detections_only(pred_polygons, gt_polygons)
         else:
             # 通常のEnd-to-Endモード
-            preds = run_inference_on_image(predictor, img_path)
+            preds = run_inference_on_image(det, reco, img_path)
 
             # GT の整形（texts が無い or 長さ不一致に備えて保護）
             polys = ann.get("polygons", [])

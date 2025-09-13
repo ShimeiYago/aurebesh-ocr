@@ -10,6 +10,7 @@ import torch
 import numpy as np
 import cv2
 from tqdm import tqdm
+from PIL import Image
 
 # ── docTR
 from doctr.io import DocumentFile
@@ -17,10 +18,13 @@ from doctr.models import ocr_predictor, detection, recognition
 from doctr.models.detection.differentiable_binarization.base import DBPostProcessor
 from doctr.models.detection.zoo import detection_predictor
 from doctr.utils.geometry import detach_scores
+from doctr import transforms as T
+from torchvision.transforms.v2 import Normalize
 
 from shapely.geometry import Polygon
 
 from .config import get_charset, get_model_config
+from .img_process import perspective_crop_polygon
 
 
 # -------------------------
@@ -245,6 +249,165 @@ def run_detection_only(det, image_path: str) -> List[np.ndarray]:
     return normalized_result_polygons
 
 
+def run_recognition(rec, image: Image.Image) -> str:
+    """
+    PIL画像からrecognizerのみを実行してテキストを返す関数
+    train_recognizer.pyと完全に一致する前処理を適用
+    
+    Args:
+        rec: recognition model (load_recognizer で作成したもの)
+        image: PIL Image オブジェクト
+    
+    Returns:
+        認識されたテキスト文字列
+    """
+    try:
+        # モデルの設定から input_size と正規化パラメータを取得
+        input_size = rec.cfg["input_shape"][1]  # Height from (C, H, W)
+        mean, std = rec.cfg["mean"], rec.cfg["std"]
+        
+        # PIL ImageをNumPy配列に変換（HWC形式、uint8）
+        img_array = np.array(image)
+        if len(img_array.shape) == 2:  # グレースケール画像の場合
+            img_array = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
+        elif len(img_array.shape) == 3 and img_array.shape[2] == 4:  # RGBA画像の場合
+            img_array = cv2.cvtColor(img_array, cv2.COLOR_RGBA2RGB)
+        
+        # DocTRのT.Resizeを直接使わずに、OpenCVで手動リサイズ
+        # train_recognizer.pyと同じように (input_size, 4 * input_size) にリサイズ
+        target_height = input_size
+        target_width = 4 * input_size
+        
+        # アスペクト比を保持してリサイズ
+        h, w = img_array.shape[:2]
+        aspect_ratio = w / h
+        
+        if aspect_ratio > (target_width / target_height):
+            # 幅が基準：幅をtarget_widthに合わせる
+            new_width = target_width
+            new_height = int(target_width / aspect_ratio)
+        else:
+            # 高さが基準：高さをtarget_heightに合わせる
+            new_height = target_height
+            new_width = int(target_height * aspect_ratio)
+        
+        # リサイズ
+        resized_img = cv2.resize(img_array, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+        
+        # パディングして目標サイズに合わせる
+        pad_height = target_height - new_height
+        pad_width = target_width - new_width
+        
+        # 中央に配置するためのパディング
+        pad_top = pad_height // 2
+        pad_bottom = pad_height - pad_top
+        pad_left = pad_width // 2
+        pad_right = pad_width - pad_left
+        
+        # パディング追加（白で埋める）
+        padded_img = cv2.copyMakeBorder(
+            resized_img, pad_top, pad_bottom, pad_left, pad_right,
+            cv2.BORDER_CONSTANT, value=(255, 255, 255)
+        )
+        
+        # テンソルに変換
+        img_tensor = torch.from_numpy(padded_img).float() / 255.0  # [0,1]に正規化
+        if len(img_tensor.shape) == 3:  # (H, W, C) -> (C, H, W)
+            img_tensor = img_tensor.permute(2, 0, 1)
+        img_tensor = img_tensor.unsqueeze(0)  # バッチ次元を追加: (1, C, H, W)
+        
+        # 正規化を適用（train_recognizer.pyのL356相当）
+        normalize_transform = Normalize(mean=mean, std=std)
+        img_tensor = normalize_transform(img_tensor)
+        
+        # デバイスに移動
+        device = next(rec.parameters()).device
+        img_tensor = img_tensor.to(device)
+        
+        # 推論実行
+        with torch.no_grad():
+            rec.eval()
+            output = rec(img_tensor)
+            
+            # 出力の形式をチェック
+            if isinstance(output, (list, tuple)):
+                # リストまたはタプルの場合、最初の要素を使用
+                logits = output[0] if len(output) > 0 else output
+            elif isinstance(output, dict):
+                # 辞書形式の場合、適切なキーからlogitsを取得
+                if 'preds' in output:
+                    # 'preds'キーがある場合、これは既にデコードされた予測結果
+                    preds = output['preds']
+                    if isinstance(preds, list) and len(preds) > 0:
+                        # 最初の予測を取得
+                        first_pred = preds[0]
+                        if isinstance(first_pred, tuple) and len(first_pred) >= 1:
+                            # (text, confidence) の形式
+                            return first_pred[0]  # テキスト部分を返す
+                        elif isinstance(first_pred, str):
+                            return first_pred
+                    return ""
+                elif 'logits' in output:
+                    logits = output['logits']
+                elif 'output' in output:
+                    logits = output['output']
+                else:
+                    # 最初の値を使用
+                    logits = list(output.values())[0]
+            else:
+                logits = output
+            
+            # logitsがまだリストの場合の処理（念のため）
+            if isinstance(logits, list):
+                if len(logits) > 0 and isinstance(logits[0], tuple):
+                    # 既にデコードされた結果の場合
+                    return logits[0][0] if len(logits[0]) > 0 else ""
+                elif len(logits) > 0:
+                    logits = logits[0]  # 最初の要素を取得
+                else:
+                    return ""
+            
+            # CTC出力からテキストに変換
+            # docTRのrecognition modelは通常logitsを返すので、適切にデコード
+            if hasattr(rec, 'postprocessor'):
+                # postprocessorがある場合はそれを使用
+                decoded = rec.postprocessor(logits)
+                if isinstance(decoded, list) and len(decoded) > 0:
+                    return decoded[0] if isinstance(decoded[0], str) else ""
+            else:
+                # 手動でCTCデコード（簡易版）
+                # logitsは通常 (batch_size, sequence_length, num_classes) の形状
+                if len(logits.shape) == 3:
+                    # 最も確率の高いクラスを選択
+                    pred_indices = torch.argmax(logits, dim=2)
+                    pred_indices = pred_indices.squeeze(0)  # バッチ次元を除去
+                    
+                    # CTCのblankトークン（通常は0番目）を除去し、連続する同じ文字を統合
+                    if hasattr(rec, 'vocab'):
+                        vocab = rec.vocab
+                        decoded_chars = []
+                        prev_idx = -1
+                        
+                        for idx in pred_indices:
+                            idx = idx.item()
+                            # blankトークン（0）をスキップし、連続する同じ文字を統合
+                            if idx != 0 and idx != prev_idx:
+                                if idx < len(vocab):
+                                    decoded_chars.append(vocab[idx])
+                            prev_idx = idx
+                        
+                        return ''.join(decoded_chars)
+        
+        return ""
+        
+    except Exception as e:
+        # エラーの詳細を出力してデバッグを容易にする
+        print(f"Error in run_recognition: {e}")
+        import traceback
+        traceback.print_exc()
+        return ""
+
+
 # -------------------------
 # I/O helpers
 # -------------------------
@@ -272,67 +435,80 @@ def read_labels_json(dataset_root: str) -> Dict[str, Any]:
 # -------------------------
 # Inference core
 # -------------------------
-def run_inference_on_image(predictor, image_path: str, cfg: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+def run_inference_on_image(det, rec, image_path: str, cfg: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     """
-    Return: [{polygon: [[x,y],...], text: str, confidence: float}, ...]
-    polygon は画像ピクセル座標（整数）に変換して返す
+    detectorとrecognizerを別々に実行してOCR結果を返す関数
+    
+    Args:
+        det: detection model (load_detector で作成したもの)
+        rec: recognition model (load_recognizer で作成したもの)
+        image_path: 画像ファイルのパス
+        cfg: 設定辞書（フィルタリング用）
+    
+    Returns:
+        [{polygon: [[x,y],...], text: str, confidence: float}, ...]
+        polygon は画像ピクセル座標（整数）に変換して返す
     """
-    doc = DocumentFile.from_images(image_path)
-    out = predictor(doc)  # list-like; 1ページ想定
-    # 読み込み済のサイズ取得（DocumentFile は内部で読むので別途 cv2 でもOK）
-    img = cv2.imread(image_path)
-    h, w = img.shape[:2]
-
+    # 1. detection実行
+    detection_results = run_detection_only(det, image_path)
+    
+    # 画像が複数ページある場合は最初のページのみ処理
+    if len(detection_results) == 0:
+        return []
+    
+    page_polygons = detection_results[0]  # 最初のページの検出結果
+    if len(page_polygons) == 0:
+        return []
+    
+    # 2. 元画像を読み込み
+    original_image = Image.open(image_path)
+    if original_image.mode != 'RGB':
+        original_image = original_image.convert('RGB')
+    
     results: List[Dict[str, Any]] = []
-    # doctr の階層: pages -> blocks -> lines -> words
-    page = out.pages[0]
-    for block in page.blocks:
-        for line in block.lines:
-            for word in line.words:
-                # word.geometry は正規化座標（0-1）
-                poly_norm = word.geometry
+    
+    # 3. 各検出領域でrecognition実行
+    for polygon in page_polygons:
+        # polygon は (4, 2) の numpy array: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+        polygon_list = polygon.tolist()  # List[List[int]] 形式に変換
+        
+        try:
+            # 4. polygonを使って画像を切り取り
+            cropped_image = perspective_crop_polygon(original_image, polygon_list)
+            
+            # 5. 切り取った画像でrecognition実行
+            recognized_text = run_recognition(rec, cropped_image)
+            
+            # 6. confidence計算（認識モデルから直接取得できない場合は1.0をデフォルト）
+            confidence = 1.0  # デフォルト値
+            
+            # 7. 後段フィルタの適用
+            if cfg and "recognizer" in cfg:
+                rec_cfg = cfg["recognizer"]
                 
-                # tupleをnumpy arrayに変換
-                if isinstance(poly_norm, tuple):
-                    poly_norm = np.array(poly_norm)
+                # min_conf フィルタ
+                min_conf = rec_cfg.get("min_conf", 0.0)
+                if confidence < min_conf:
+                    continue
                 
-                # 2点のbounding box形式を4点のpolygonに変換
-                if poly_norm.shape[0] == 2:
-                    # (x1,y1), (x2,y2) -> 4点のpolygon
-                    x1, y1 = poly_norm[0]
-                    x2, y2 = poly_norm[1]
-                    # 左上 -> 右上 -> 右下 -> 左下 の順序
-                    poly_norm = np.array([
-                        [x1, y1],  # 左上
-                        [x2, y1],  # 右上
-                        [x2, y2],  # 右下
-                        [x1, y2]   # 左下
-                    ])
-                
-                # ピクセル座標に変換
-                pts = [[int(x * w), int(y * h)] for (x, y) in poly_norm]
-                conf = float(getattr(word, "confidence", 1.0))
-                
-                # 後段フィルタの適用
-                text = word.value
-                if cfg and "recognizer" in cfg:
-                    rec_cfg = cfg["recognizer"]
-                    
-                    # min_conf フィルタ
-                    min_conf = rec_cfg["min_conf"]
-                    if conf < min_conf:
-                        continue
-                    
-                    # min_len フィルタ
-                    min_len = rec_cfg.get("min_len", 0)
-                    if len(text) < min_len:
-                        continue
-                
+                # min_len フィルタ
+                min_len = rec_cfg.get("min_len", 0)
+                if len(recognized_text) < min_len:
+                    continue
+            
+            # 8. 結果に追加
+            if recognized_text:  # 空文字列でない場合のみ追加
                 results.append({
-                    "polygon": pts,
-                    "text": text,
-                    "confidence": conf,
+                    "polygon": polygon_list,
+                    "text": recognized_text,
+                    "confidence": confidence,
                 })
+                
+        except Exception as e:
+            # 個別の認識エラーは警告として出力し、処理を続行
+            print(f"Warning: Failed to recognize text in polygon {polygon_list}: {e}")
+            continue
+    
     return results
 
 
@@ -411,13 +587,13 @@ def create_progress_bar(iterable, desc: str = "", total: int = None):
     return tqdm(iterable, desc=desc, total=total, unit="files", 
                 bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]')
 
-def run_inference_with_progress(predictor, image_paths: List[str], cfg: Dict[str, Any] = None, 
+def run_inference_with_progress(det, rec, image_paths: List[str], cfg: Dict[str, Any] = None, 
                                desc: str = "Processing images") -> Dict[str, List[Dict[str, Any]]]:
     """プログレスバー付きで複数画像の推論を実行"""
     results = {}
     for img_path in create_progress_bar(image_paths, desc=desc):
         try:
-            preds = run_inference_on_image(predictor, img_path, cfg)
+            preds = run_inference_on_image(det, rec, img_path, cfg)
             results[os.path.basename(img_path)] = preds
         except Exception as e:
             print(f"Warning: Failed to process {img_path}: {e}")

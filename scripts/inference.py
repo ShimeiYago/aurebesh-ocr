@@ -24,7 +24,7 @@ def main():
 
     det = load_detector(args.det_path, cfg, device)
     reco = load_recognizer(args.rec_path, cfg, device)
-    predictor = build_predictor(det, reco)
+    # predictor = build_predictor(det, reco)
 
     os.makedirs(args.save_dir, exist_ok=True)
     os.makedirs(os.path.join(args.save_dir, "images"), exist_ok=True)
@@ -33,7 +33,7 @@ def main():
     results = {}
     
     for img_path in create_progress_bar(image_paths, desc="Processing images"):
-        preds = run_inference_on_image(predictor, img_path, cfg)
+        preds = run_inference_on_image(det, reco, img_path, cfg)
         results[os.path.basename(img_path)] = preds
 
         vis = draw_predictions(img_path, preds)
