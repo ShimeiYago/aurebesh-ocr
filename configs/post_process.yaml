@@ -1,12 +1,12 @@
 detector:
   # detectorが出力するボックスの形状を調整
-  bin_thresh: 0.395    # doctrのデフォルトは 0.3
-  unclip_ratio: 1.710  # doctrのデフォルトは 1.5
+  bin_thresh: 0.3    # doctrのデフォルトは 0.3
+  unclip_ratio: 1.5  # doctrのデフォルトは 1.5
 
   # しきい値（信頼度が低い検出結果を除外）
   box_thresh: 0.1    # doctrのデフォルトは 0.1
 
 recognizer:
   # 後段フィルタ
-  min_conf: 0.3   # 信頼度が低い検出結果を除外
+  min_conf: 0.1   # 信頼度が低い検出結果を除外
   # min_len: 2.0  # 短すぎるテキストを除外（文字数）。min_confで十分な場合が多いが、それでも誤認識が多い場合に使用
