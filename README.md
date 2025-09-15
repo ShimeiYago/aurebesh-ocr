@@ -113,6 +113,7 @@ python scripts/train_detector.py \
 # Optional: Grid search best bin_thresh and unclip_ratio for detector
 python scripts/search_optimized_detector_params.py \
   --input data/synth/test \
+  --input_real data/real \
   --det_path outputs/detector/weights.pt
 
 # 4. Train recognizer (50 epochs)
