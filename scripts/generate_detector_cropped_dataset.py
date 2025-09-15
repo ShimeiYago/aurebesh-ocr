@@ -151,7 +151,7 @@ def create_cropped_dataset(args):
             img_path = images_dir / img_filename
             
             # Run detection
-            detected_polygons_list = run_detection_only(detector, str(img_path))
+            detected_polygons_list, _ = run_detection_only(detector, str(img_path))
             
             if not detected_polygons_list or len(detected_polygons_list) == 0:
                 print(f"Warning: No detections for {img_filename}")

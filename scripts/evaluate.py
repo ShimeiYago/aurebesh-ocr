@@ -123,7 +123,7 @@ def main():
         # det-onlyモードかどうかで処理を分岐
         if getattr(args, 'det_only', False):
             # Detection onlyモード
-            pred_polygons_list = run_detection_only(det, img_path)
+            pred_polygons_list, _ = run_detection_only(det, img_path)
             # 1ページ目のpolygonsを取得（複数ページある場合は最初のページのみ）
             pred_polygons = pred_polygons_list[0].tolist() if len(pred_polygons_list) > 0 and len(pred_polygons_list[0]) > 0 else []
             

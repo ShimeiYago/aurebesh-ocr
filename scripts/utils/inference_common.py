@@ -136,16 +136,16 @@ def extract_loc(det, pages: List[np.ndarray]) -> Tuple[List[np.ndarray], List[np
     
     return loc_preds, out_maps
 
-def loc_to_polygons(loc_preds: List[Dict], origin_page_shapes: List[Tuple[int, int]]) -> List[np.ndarray]:
+def loc_to_polygons(loc_preds: List[Dict], origin_page_shapes: List[Tuple[int, int]]) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
-    feature mapから最終的なpolygon座標を計算する関数
+    feature mapから最終的なpolygon座標とobjectness scoresを計算する関数
     
     Args:
         loc_preds: detection predictorからの出力（辞書形式）
         origin_page_shapes: 元画像のサイズ [(height, width), ...]
     
     Returns:
-        List of polygon coordinates for each page (pixel coordinates)
+        Tuple of (List of polygon coordinates, List of objectness scores) for each page
     """
     # OCRPredictorのL105-109相当: 辞書形式から座標を抽出
     assert all(len(loc_pred) == 1 for loc_pred in loc_preds), (
@@ -159,7 +159,9 @@ def loc_to_polygons(loc_preds: List[Dict], origin_page_shapes: List[Tuple[int, i
     
     # 正規化座標（0-1）をピクセル座標に変換
     result_polygons = []
-    for page_polygons, (orig_h, orig_w) in zip(loc_preds_processed, origin_page_shapes):
+    result_scores = []
+    
+    for page_polygons, page_scores, (orig_h, orig_w) in zip(loc_preds_processed, objectness_scores, origin_page_shapes):
         # ピクセル座標に変換
         pixel_polygons = []
         for poly in page_polygons:
@@ -169,10 +171,12 @@ def loc_to_polygons(loc_preds: List[Dict], origin_page_shapes: List[Tuple[int, i
         
         if pixel_polygons:
             result_polygons.append(np.array(pixel_polygons))
+            result_scores.append(np.array(page_scores))
         else:
             result_polygons.append(np.empty((0, 4, 2), dtype=np.int32))
+            result_scores.append(np.empty((0,), dtype=np.float32))
     
-    return result_polygons
+    return result_polygons, result_scores
 
 def normalize_polygon_order(polygon: np.ndarray) -> np.ndarray:
     """
@@ -206,9 +210,9 @@ def normalize_polygon_order(polygon: np.ndarray) -> np.ndarray:
     return polygon[sorted_indices]
 
 
-def run_detection_only(det, image_path: str) -> List[np.ndarray]:
+def run_detection_only(det, image_path: str) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
-    画像パスからdetectorのみを実行してpolygon座標を返す関数
+    画像パスからdetectorのみを実行してpolygon座標とobjectness scoresを返す関数
     build_predictorと同じ画像前処理（DocumentFile）を使用
     内部で2つの関数を呼び出す：extract_loc + loc_to_polygons
     
@@ -217,8 +221,9 @@ def run_detection_only(det, image_path: str) -> List[np.ndarray]:
         image_path: 画像ファイルのパス
     
     Returns:
-        List of polygon coordinates for each page
-        Each element is numpy array of shape (N, 4, 2) for N detections
+        Tuple of (List of polygon coordinates, List of objectness scores) for each page
+        Each polygon element is numpy array of shape (N, 4, 2) for N detections
+        Each score element is numpy array of shape (N,) for N detections
         Format: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]] per detection
         座標はピクセル座標（整数）で返され、左上から時計回りの順序に正規化される
     """
@@ -231,8 +236,8 @@ def run_detection_only(det, image_path: str) -> List[np.ndarray]:
     # 1. location predictionsを抽出
     loc_preds, _ = extract_loc(det, pages)
 
-    # 2. location predictionsからpolygonを計算
-    result_polygons = loc_to_polygons(loc_preds, origin_page_shapes)
+    # 2. location predictionsからpolygonとscoreを計算
+    result_polygons, result_scores = loc_to_polygons(loc_preds, origin_page_shapes)
     
     # 3. 各polygonの座標順序を正規化
     normalized_result_polygons = []
@@ -246,7 +251,7 @@ def run_detection_only(det, image_path: str) -> List[np.ndarray]:
         else:
             normalized_result_polygons.append(page_polygons)
     
-    return normalized_result_polygons
+    return normalized_result_polygons, result_scores
 
 
 def run_recognition(rec, image: Image.Image) -> str:
@@ -450,7 +455,7 @@ def run_inference_on_image(det, rec, image_path: str, cfg: Dict[str, Any] = None
         polygon は画像ピクセル座標（整数）に変換して返す
     """
     # 1. detection実行
-    detection_results = run_detection_only(det, image_path)
+    detection_results, _ = run_detection_only(det, image_path)
     
     # 画像が複数ページある場合は最初のページのみ処理
     if len(detection_results) == 0:
